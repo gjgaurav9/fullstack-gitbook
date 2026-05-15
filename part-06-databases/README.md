@@ -8,4 +8,11 @@ The database is where your application's hardest problems live. Schema decisions
 
 ## Chapters in this Part
 
-*Chapter list filled in during Pass 1.*
+1. **PostgreSQL deeply** — MVCC, transactions, isolation levels, indexes, query planning, vacuum, and the parts that bite at scale.
+2. **Data modeling that lasts** — Normalization, denormalization, soft deletes, audit trails, time as a first-class column.
+3. **ACID, BASE, and CAP without the slogans** — What each guarantee actually means, and where engineers misread the tradeoffs.
+4. **Redis as more than a cache** — Data structures, pub/sub, streams, Lua scripts, persistence modes, and the right use cases for each.
+5. **MongoDB and document stores** — When schemaless helps, when it hurts, and the patterns for both.
+6. **Search engines** — Elasticsearch and OpenSearch: tokenizers, analyzers, scoring, relevance tuning, and operating a cluster.
+7. **Time-series, graph, and vector databases** — When the workload demands a specialized store and which ones to evaluate.
+8. **ORMs and query builders** — The leaky abstraction, when to drop to raw SQL, and migration discipline.

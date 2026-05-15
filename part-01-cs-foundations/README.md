@@ -8,4 +8,10 @@ Most engineers learned these once, half-forgot them, then rediscovered them on a
 
 ## Chapters in this Part
 
-*Chapter list filled in during Pass 1.*
+1. **Data structures you actually use** — Arrays, hash maps, trees, heaps, graphs: when each is the right tool and what it costs in space, time, and cache behavior.
+2. **Algorithms in working code** — Sorting, searching, traversal, dynamic programming through real problems, not contest puzzles.
+3. **Complexity analysis without hand-waving** — Big O, average vs. worst case, amortized cost, and why "fast enough" is a measurement, not a guess.
+4. **The operating system from a programmer's seat** — Processes, threads, scheduling, virtual memory, file systems, and the system calls that show up in your stack traces.
+5. **Networking up the stack** — IP, TCP, UDP, DNS, HTTP/2 and 3, TLS: what each layer is actually doing for your request.
+6. **Concurrency primitives** — Mutexes, semaphores, condition variables, channels, atomics: the building blocks under every async library you'll touch.
+7. **The discrete math you'll reach for** — Sets, logic, combinatorics, graph theory, modular arithmetic, applied to problems engineers actually hit.

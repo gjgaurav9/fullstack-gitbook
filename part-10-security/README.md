@@ -8,4 +8,10 @@ Every application engineer is a security engineer whether they want the title or
 
 ## Chapters in this Part
 
-*Chapter list filled in during Pass 1.*
+1. **The OWASP Top 10, demonstrated** — Each class of attack with a working example, the detection signal, and the fix.
+2. **AuthN/AuthZ models that scale** — RBAC, ABAC, ReBAC, policy engines, and choosing between them.
+3. **Applied cryptography** — Hashing, symmetric and asymmetric encryption, signatures, KDFs, and the algorithms you should never roll yourself.
+4. **TLS, certificates, and the trust chain** — Handshakes, ALPN, mTLS, cert lifecycle, and the failure modes.
+5. **Secrets management** — Vaults, KMS, rotation, environment hygiene, and the patterns that prevent credential leaks.
+6. **Supply chain and dependency security** — SBOMs, signed artifacts, lockfile auditing, typosquatting, and the parts CI should catch.
+7. **Threat modeling and compliance touchpoints** — STRIDE, data classification, and the SOC 2 / GDPR / HIPAA basics every engineer should know.
