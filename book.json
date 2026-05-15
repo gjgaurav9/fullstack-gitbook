@@ -1,0 +1,10 @@
+{
+  "title": "The Modern Full-Stack Developer",
+  "author": "Gaurav Jain",
+  "description": "An Essential Skills Handbook (2026 Edition)",
+  "language": "en",
+  "structure": {
+    "readme": "README.md",
+    "summary": "SUMMARY.md"
+  }
+}
