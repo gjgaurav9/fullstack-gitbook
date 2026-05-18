@@ -27,7 +27,7 @@
 ## Part 3 — Version Control & Collaboration
 
 * [Overview](part-03-version-control/README.md)
-* Git internals *(seed — Pass 2)*
+* [Git internals](part-03-version-control/01-git-internals.md)
 * Branching strategies that scale *(Pass 2)*
 * The pull-request workflow *(Pass 2)*
 * Monorepos vs. polyrepos *(Pass 2)*

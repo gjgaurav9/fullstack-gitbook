@@ -8,7 +8,7 @@ Every engineer uses Git daily. Most use 12 commands and treat the rest as magic.
 
 ## Chapters in this Part
 
-1. **Git internals** — How Git actually stores history as a content-addressable tree, and why every advanced operation is just a tree walk. *(Style anchor for the rest of the book — drafted first in Pass 2.)*
+1. **[Git internals](01-git-internals.md)** — How Git actually stores history as a content-addressable tree, and why every advanced operation is just a tree walk. *Style anchor for the rest of the book.*
 2. **Branching strategies that scale** — Trunk-based development, GitFlow, release branches, and which fits which team size and release cadence.
 3. **The pull-request workflow** — Writing reviewable PRs, code-review etiquette, merge vs. rebase vs. squash, draft PRs, stacked PRs.
 4. **Monorepos vs. polyrepos** — Tradeoffs in tooling, ownership, CI cost, and the criteria that should drive the choice.
