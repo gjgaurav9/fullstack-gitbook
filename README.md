@@ -2,7 +2,7 @@
 
 ### An Essential Skills Handbook (2026 Edition)
 
-A single, opinionated handbook for engineers who want to move from "I can ship features" to "I can reason about systems." Fifteen parts, ~80 chapters, written end-to-end in one voice.
+A single, opinionated handbook for engineers who want to move from "I can ship features" to "I can reason about systems." Fifteen parts, 105 chapters, written end-to-end in one voice.
 
 ## Who this is for
 
