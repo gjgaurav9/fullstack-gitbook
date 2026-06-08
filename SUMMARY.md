@@ -28,7 +28,7 @@
 
 * [Overview](part-03-version-control/README.md)
 * [Git internals](part-03-version-control/01-git-internals.md)
-* Branching strategies that scale
+* [Branching strategies that scale](part-03-version-control/02-branching-strategies.md)
 * The pull-request workflow
 * Monorepos vs. polyrepos
 * Conventional commits and semantic versioning
