@@ -30,7 +30,7 @@
 * [Git internals](part-03-version-control/01-git-internals.md)
 * [Branching strategies that scale](part-03-version-control/02-branching-strategies.md)
 * [The pull-request workflow](part-03-version-control/03-pull-request-workflow.md)
-* Monorepos vs. polyrepos
+* [Monorepos vs. polyrepos](part-03-version-control/04-monorepos-vs-polyrepos.md)
 * Conventional commits and semantic versioning
 * Recovering from Git disasters
 
