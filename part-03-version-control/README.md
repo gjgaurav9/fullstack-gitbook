@@ -13,4 +13,4 @@ Every engineer uses Git daily. Most use 12 commands and treat the rest as magic.
 3. **[The pull-request workflow](03-pull-request-workflow.md)** — Writing reviewable PRs, code-review etiquette, merge vs. rebase vs. squash, draft PRs, stacked PRs.
 4. **[Monorepos vs. polyrepos](04-monorepos-vs-polyrepos.md)** — Tradeoffs in tooling, ownership, CI cost, and the criteria that should drive the choice.
 5. **[Conventional commits and semantic versioning](05-conventional-commits-semver.md)** — The contract that lets your changelog and release notes write themselves.
-6. **Recovering from Git disasters** — Reflog, dangling commits, accidental force-push, garbage collection: the safety net no one teaches.
+6. **[Recovering from Git disasters](06-recovering-from-git-disasters.md)** — Reflog, dangling commits, accidental force-push, garbage collection: the safety net no one teaches.

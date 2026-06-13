@@ -32,7 +32,7 @@
 * [The pull-request workflow](part-03-version-control/03-pull-request-workflow.md)
 * [Monorepos vs. polyrepos](part-03-version-control/04-monorepos-vs-polyrepos.md)
 * [Conventional commits and semantic versioning](part-03-version-control/05-conventional-commits-semver.md)
-* Recovering from Git disasters
+* [Recovering from Git disasters](part-03-version-control/06-recovering-from-git-disasters.md)
 
 ## Part 4 — Frontend Engineering
 
