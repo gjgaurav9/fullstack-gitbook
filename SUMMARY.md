@@ -128,14 +128,14 @@
 ## Part 12 — AI Engineering
 
 * [Overview](part-12-ai-engineering/README.md)
-* LLM fundamentals for application engineers
-* Prompt engineering as a real skill
-* RAG done well
-* Vector databases
-* Agents and tool use
-* Model Context Protocol (MCP)
-* Evals and guardrails
-* The cost/latency/quality triangle
+* [LLM fundamentals for application engineers](part-12-ai-engineering/01-llm-fundamentals.md)
+* [Prompt engineering as a real skill](part-12-ai-engineering/02-prompt-engineering.md)
+* [RAG done well](part-12-ai-engineering/03-rag.md)
+* [Vector databases](part-12-ai-engineering/04-vector-databases.md)
+* [Agents and tool use](part-12-ai-engineering/05-agents-and-tool-use.md)
+* [Model Context Protocol (MCP)](part-12-ai-engineering/06-model-context-protocol.md)
+* [Evals and guardrails](part-12-ai-engineering/07-evals-and-guardrails.md)
+* [The cost, latency, and quality triangle](part-12-ai-engineering/08-cost-latency-quality.md)
 
 ## Part 13 — Architecture & Design
 
