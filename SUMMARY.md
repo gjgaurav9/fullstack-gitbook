@@ -49,14 +49,14 @@
 ## Part 5 — Backend Engineering
 
 * [Overview](part-05-backend/README.md)
-* API design
-* Authentication and authorization
-* Architectural patterns
-* Messaging and queues
-* Caching layers
-* Background jobs and schedulers
-* Real-time and streaming
-* Rate limiting and quotas
+* [API design: REST, GraphQL, and gRPC](part-05-backend/01-api-design.md)
+* [Authentication and authorization](part-05-backend/02-authentication-authorization.md)
+* [Architectural patterns: layered, hexagonal, and DDD](part-05-backend/03-architectural-patterns.md)
+* [Messaging and queues](part-05-backend/04-messaging-and-queues.md)
+* [Caching layers](part-05-backend/05-caching-layers.md)
+* [Background jobs and schedulers](part-05-backend/06-background-jobs.md)
+* [Real-time and streaming](part-05-backend/07-realtime-and-streaming.md)
+* [Rate limiting and quotas](part-05-backend/08-rate-limiting.md)
 
 ## Part 6 — Databases & Data
 
