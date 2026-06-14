@@ -6,13 +6,13 @@
 ## Part 1 — CS Foundations
 
 * [Overview](part-01-cs-foundations/README.md)
-* Data structures you actually use
-* Algorithms in working code
-* Complexity analysis without hand-waving
-* The operating system from a programmer's seat
-* Networking up the stack
-* Concurrency primitives
-* The discrete math you'll reach for
+* [Data structures you actually use](part-01-cs-foundations/01-data-structures.md)
+* [Algorithms in working code](part-01-cs-foundations/02-algorithms.md)
+* [Complexity analysis without hand-waving](part-01-cs-foundations/03-complexity.md)
+* [The operating system from a programmer's seat](part-01-cs-foundations/04-operating-systems.md)
+* [Networking up the stack](part-01-cs-foundations/05-networking.md)
+* [Concurrency primitives](part-01-cs-foundations/06-concurrency-primitives.md)
+* [The discrete math you'll reach for](part-01-cs-foundations/07-discrete-math.md)
 
 ## Part 2 — Programming Foundations
 
