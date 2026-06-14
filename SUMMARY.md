@@ -73,14 +73,14 @@
 ## Part 7 — System Design & Distributed Systems
 
 * [Overview](part-07-system-design/README.md)
-* Scaling vertically, then horizontally
-* Load balancing
-* Microservices in practice
-* Event-driven architecture
-* Event sourcing and CQRS
-* The saga pattern
-* Consensus and replication
-* Idempotency and the exactly-once illusion
+* [Scaling vertically, then horizontally](part-07-system-design/01-scaling.md)
+* [Load balancing](part-07-system-design/02-load-balancing.md)
+* [Microservices in practice](part-07-system-design/03-microservices.md)
+* [Event-driven architecture](part-07-system-design/04-event-driven.md)
+* [Event sourcing and CQRS](part-07-system-design/05-event-sourcing-cqrs.md)
+* [The saga pattern](part-07-system-design/06-saga-pattern.md)
+* [Consensus and replication](part-07-system-design/07-consensus-replication.md)
+* [Idempotency and the exactly-once illusion](part-07-system-design/08-idempotency.md)
 
 ## Part 8 — DevOps, Infrastructure & Cloud
 
