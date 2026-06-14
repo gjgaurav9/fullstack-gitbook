@@ -107,13 +107,13 @@
 ## Part 10 — Security
 
 * [Overview](part-10-security/README.md)
-* The OWASP Top 10, demonstrated
-* AuthN/AuthZ models that scale
-* Applied cryptography
-* TLS, certificates, and the trust chain
-* Secrets management
-* Supply chain and dependency security
-* Threat modeling and compliance touchpoints
+* [The OWASP Top 10, demonstrated](part-10-security/01-owasp-top-10.md)
+* [AuthN/AuthZ models that scale](part-10-security/02-authn-authz-models.md)
+* [Applied cryptography](part-10-security/03-applied-cryptography.md)
+* [TLS, certificates, and the trust chain](part-10-security/04-tls-certificates.md)
+* [Secrets management](part-10-security/05-secrets-management.md)
+* [Supply chain and dependency security](part-10-security/06-supply-chain-security.md)
+* [Threat modeling and compliance touchpoints](part-10-security/07-threat-modeling-compliance.md)
 
 ## Part 11 — Testing & Quality
 
