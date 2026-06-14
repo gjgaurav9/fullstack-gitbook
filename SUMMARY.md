@@ -61,14 +61,14 @@
 ## Part 6 — Databases & Data
 
 * [Overview](part-06-databases/README.md)
-* PostgreSQL deeply
-* Data modeling that lasts
-* ACID, BASE, and CAP without the slogans
-* Redis as more than a cache
-* MongoDB and document stores
-* Search engines
-* Time-series, graph, and vector databases
-* ORMs and query builders
+* [PostgreSQL deeply](part-06-databases/01-postgresql-deep-dive.md)
+* [Data modeling that lasts](part-06-databases/02-data-modeling.md)
+* [ACID, BASE, and CAP without the slogans](part-06-databases/03-acid-base-cap.md)
+* [Redis as more than a cache](part-06-databases/04-redis.md)
+* [MongoDB and document stores](part-06-databases/05-mongodb-document-stores.md)
+* [Search engines](part-06-databases/06-search-engines.md)
+* [Time-series, graph, and vector databases](part-06-databases/07-specialized-databases.md)
+* [ORMs and query builders](part-06-databases/08-orms-query-builders.md)
 
 ## Part 7 — System Design & Distributed Systems
 
