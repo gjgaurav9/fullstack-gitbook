@@ -50,6 +50,17 @@ greet({"name": "Ada"})   # AttributeError: 'dict' has no attribute 'name'
                          # ...but only when this line actually runs
 ```
 
+_The same idea in TypeScript:_
+
+```typescript
+function greet(user: any) {
+  return `Hello, ${user.getName()}`;
+}
+
+greet({ name: "Ada" }); // TypeError: user.getName is not a function
+                        // ...but only when this line actually runs
+```
+
 Python with type hints, checked by `mypy` before running:
 
 ```python
@@ -65,6 +76,22 @@ def greet(user: User) -> str:
 greet({"name": "Ada"})
 # mypy: error: Argument 1 to "greet" has incompatible type
 #        "dict[str, str]"; expected "User"
+```
+
+_In TypeScript:_
+
+```typescript
+class User {
+  constructor(public name: string) {}
+}
+
+function greet(user: User): string {
+  return `Hello, ${user.name}`;
+}
+
+greet({ name: "Ada" });
+// error TS2345: Argument of type '{ name: string; }' is not
+//   assignable to parameter of type 'User'.
 ```
 
 The hints are optional and erased at runtime — Python still runs the broken call if you skip `mypy`. That's gradual typing: the guarantee exists only where you opt in and run the checker.
@@ -124,6 +151,18 @@ type Fahrenheit float64
 func freezing() Celsius { return 0 }
 
 var f Fahrenheit = freezing() // compile error: cannot use Celsius as Fahrenheit
+```
+
+_The TypeScript equivalent:_
+
+```typescript
+type Celsius = number & { readonly __unit: "C" };
+type Fahrenheit = number & { readonly __unit: "F" };
+
+function freezing(): Celsius { return 0 as Celsius; }
+
+const f: Fahrenheit = freezing();
+// error TS2322: Type 'Celsius' is not assignable to type 'Fahrenheit'.
 ```
 
 Both are `float64` underneath, but the names make them incompatible. This is a feature: it stops you from adding a temperature in Celsius to one in Fahrenheit, the same way nominal typing would have caught a currency mismatch in the checkout bug. Structural typing buys flexibility and easy mocking; nominal typing buys *meaning* — the ability to say "these bytes are not interchangeable even though they're the same primitive."

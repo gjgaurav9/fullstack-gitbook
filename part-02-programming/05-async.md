@@ -159,6 +159,29 @@ app.add_routes([web.get("/report", report), web.get("/health", health)])
 web.run_app(app, port=8080)
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import express from "express";
+const app = express();
+
+// ANTI-PATTERN: a blocking call inside an async handler
+app.get("/report", async (_req, res) => {
+  // a busy-wait blocks the single thread — the whole event loop stalls
+  const until = Date.now() + 3000;
+  while (Date.now() < until) {
+    /* spin for 3s, yielding to nothing */
+  }
+  res.json({ done: true });
+});
+
+app.get("/health", async (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.listen(8080);
+```
+
 The function is `async`, but `time.sleep(3)` is a **synchronous, blocking** call. It does not yield to the loop. For three seconds, `/health` is dead. This is the most common asyncio mistake: calling blocking library functions (`requests.get`, `time.sleep`, synchronous DB drivers, `open().read()` on a big file) from inside a coroutine. The `async` keyword is a promise you break the moment you call something blocking.
 
 The fix for a true wait is the async-native primitive:
@@ -167,6 +190,17 @@ The fix for a true wait is the async-native primitive:
 async def report(request):
     await asyncio.sleep(3)   # yields to the loop; /health stays alive
     return web.json_response({"done": True})
+```
+
+*In TypeScript:*
+
+```typescript
+import { setTimeout as sleep } from "node:timers/promises";
+
+app.get("/report", async (_req, res) => {
+  await sleep(3000); // yields to the loop; /health stays alive
+  res.json({ done: true });
+});
 ```
 
 But what about blocking work you *can't* avoid — a legacy synchronous library, or actual CPU work? Push it off the event loop thread with an executor:
@@ -185,6 +219,40 @@ async def report(request):
     with ProcessPoolExecutor() as pool:
         total = await loop.run_in_executor(pool, heavy_cpu, 50_000_000)
     return web.json_response({"total": total})
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// cpu-worker.ts
+import { parentPort, workerData } from "node:worker_threads";
+
+function heavyCpu(limit: number): number {
+  let total = 0;
+  for (let i = 0; i < limit; i++) total += i % 7;
+  return total;
+}
+
+parentPort!.postMessage(heavyCpu(workerData.limit));
+```
+
+```typescript
+// server.ts
+import { Worker } from "node:worker_threads";
+
+function heavyCpu(limit: number): Promise<number> {
+  // worker threads give CPU work a separate thread off the event loop
+  return new Promise((resolve, reject) => {
+    const w = new Worker("./cpu-worker.ts", { workerData: { limit } });
+    w.on("message", resolve);
+    w.on("error", reject);
+  });
+}
+
+app.get("/report", async (_req, res) => {
+  const total = await heavyCpu(50_000_000);
+  res.json({ total });
+});
 ```
 
 The choice of executor matters and exposes Python's defining constraint: the **Global Interpreter Lock (GIL)**. In the standard CPython build, one process can execute Python bytecode on only one thread at a time. So:

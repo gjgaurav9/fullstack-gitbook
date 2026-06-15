@@ -85,6 +85,23 @@ print(add_item_bad("apple"))   # ['apple']
 print(add_item_bad("banana"))  # ['apple', 'banana']  -- BUG: shared default list
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// Default param values in TS/JS are re-evaluated per call, so a literal
+// default would NOT reproduce the bug. To match Python's shared-default
+// trap, the list must be created once and captured.
+const shared: string[] = []; // created ONCE, like Python's def-time []
+
+function addItemBad(item: string, cart: string[] = shared): string[] {
+  cart.push(item);
+  return cart;
+}
+
+console.log(addItemBad("apple"));  // ['apple']
+console.log(addItemBad("banana")); // ['apple', 'banana']  -- BUG: shared default list
+```
+
 The fix in both languages is the same idea: don't share a mutable default; create a fresh one inside the call.
 
 ```python
@@ -93,6 +110,18 @@ def add_item(item, cart=None):
         cart = []        # fresh list per call
     cart.append(item)
     return cart
+```
+
+*In TypeScript:*
+
+```typescript
+function addItem(item: string, cart?: string[]): string[] {
+  if (cart === undefined) {
+    cart = [];           // fresh list per call
+  }
+  cart.push(item);
+  return cart;
+}
 ```
 
 ```javascript
@@ -117,6 +146,21 @@ func addItem(c Cart, item string) Cart {
 }
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+interface Cart {
+  items: string[];
+}
+
+function addItem(c: Cart, item: string): Cart {
+  // Objects in TS are reference types: `c` aliases the caller's object,
+  // and `c.items` is the same array. Pushing mutates shared memory.
+  c.items.push(item);
+  return c;
+}
+```
+
 Passing `Cart` by value copies the struct header — including the slice header (pointer, length, capacity) — but **not** the underlying array. If two carts were sliced from the same array with spare capacity, `append` can write into shared memory. The safe pattern is to copy explicitly when you need isolation:
 
 ```go
@@ -125,6 +169,16 @@ func addItemSafe(c Cart, item string) Cart {
 	copy(items, c.Items)            // independent backing array
 	items = append(items, item)
 	return Cart{Items: items}
+}
+```
+
+*In TypeScript:*
+
+```typescript
+function addItemSafe(c: Cart, item: string): Cart {
+  const items = [...c.items]; // independent copy of the array
+  items.push(item);
+  return { items };
 }
 ```
 
@@ -144,6 +198,20 @@ c.append(5)
 print(a)         # [1, 2, 3, 4]  -- unaffected
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// TypeScript: variables bind to objects; arrays alias
+const a = [1, 2, 3];
+const b = a;          // b and a reference the SAME array
+b.push(4);
+console.log(a);       // [1, 2, 3, 4]  -- aliased
+
+const c = a.slice();  // slice copies the array (shallow)
+c.push(5);
+console.log(a);       // [1, 2, 3, 4]  -- unaffected
+```
+
 ```go
 // Go: structs copy on assignment
 type Point struct{ X, Y int }
@@ -155,6 +223,21 @@ fmt.Println(p.X) // 1 -- p is untouched
 r := &p          // r is a pointer; *r aliases p
 r.X = 99
 fmt.Println(p.X) // 99 -- mutated through the pointer
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// TypeScript: objects are always references; emulate a value copy with a spread
+interface Point { x: number; y: number; }
+const p: Point = { x: 1, y: 2 };
+const q: Point = { ...p }; // q is an independent COPY
+q.x = 99;
+console.log(p.x);          // 1 -- p is untouched
+
+const r = p;               // r references the same object; aliases p
+r.x = 99;
+console.log(p.x);          // 99 -- mutated through the alias
 ```
 
 ```javascript
@@ -186,6 +269,24 @@ func heapAlloc() *int {
 }
 ```
 
+*In TypeScript:*
+
+```typescript
+// TS/V8 manages stack vs. heap for you; there is no escape-analysis knob.
+// A number returned by value behaves like the stack case...
+function stackAlloc(): number {
+  const x = 42;
+  return x;
+}
+
+// ...and returning a heap object that outlives the frame is the "escape" case,
+// kept alive by the GC as long as a reference exists.
+function heapAlloc(): { value: number } {
+  const x = { value: 42 };
+  return x;
+}
+```
+
 ```text
 $ go build -gcflags='-m' ./...
 ./main.go:8:2: moved to heap: x   # in heapAlloc
@@ -206,6 +307,23 @@ del b
 print(sys.getrefcount(a))  # back down by one
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// V8 uses a tracing GC, not reference counting, so there is no getrefcount.
+// The closest observable signal is reachability via WeakRef: as long as a
+// strong reference exists, deref() returns the object; once all strong refs
+// are gone and a GC runs, deref() returns undefined.
+const a: number[] = [];
+const ref = new WeakRef(a);
+
+let b: number[] | undefined = a; // another strong reference
+console.log(ref.deref() !== undefined); // true -- still reachable
+
+b = undefined; // drop the extra reference (a still holds one)
+console.log(ref.deref() !== undefined); // true -- `a` still keeps it alive
+```
+
 The absolute numbers `getrefcount` reports are implementation details and shift between CPython versions, so treat the *deltas*, not the absolute values, as the lesson: binding another name raises the count, dropping a name lowers it. When the count drops to zero, CPython frees the object immediately — deterministic, unlike a tracing GC. But cycles defeat pure refcounting:
 
 ```python
@@ -214,6 +332,17 @@ a = {}
 a["self"] = a          # a references itself: refcount never hits 0
 del a                  # object is now unreachable but still counted
 gc.collect()           # the cycle detector reclaims it
+```
+
+*In TypeScript:*
+
+```typescript
+// V8's tracing GC reclaims cycles natively -- no separate cycle collector,
+// and no manual collect call exists in standard JS. The cycle below becomes
+// eligible for collection once `a` no longer references it.
+let a: Record<string, unknown> | null = {};
+a["self"] = a;         // a references itself
+a = null;              // object is now unreachable; the tracing GC reclaims it
 ```
 
 This is why CPython ships *both* mechanisms. The refcounter handles the common case promptly; the cyclic collector sweeps the cases refcounting can't. The tradeoff is real: refcounting gives you prompt, predictable cleanup (a file handle held by an object closes the moment the last reference drops) at the cost of touching a counter on every assignment, while tracing collectors avoid that per-assignment cost but reclaim memory only when they run.

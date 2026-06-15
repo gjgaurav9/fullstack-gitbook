@@ -136,6 +136,21 @@ fns = [lambda i=i: i for i in range(3)]
 [f() for f in fns]            # [0, 1, 2]
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+const range3 = [0, 1, 2];
+
+// WRONG — late binding via one shared var; all return 2
+var i: number;
+let fns: Array<() => number> = range3.map(n => { i = n; return () => i; });
+fns.map(f => f());            // [2, 2, 2]
+
+// RIGHT — bind the value now, at definition time
+fns = range3.map(i => () => i);
+fns.map(f => f());            // [0, 1, 2]
+```
+
 Python closures are *late-binding*: they look up `i` when called, by which point the comprehension's `i` is `2`. The `i=i` default argument is evaluated at definition time, snapshotting the value. Different mechanism from JavaScript's per-iteration `let`, same lesson: when a closure outlives the loop, decide explicitly whether you want the live variable or a copy of its current value.
 
 ### The call stack and recursion
@@ -156,6 +171,21 @@ a()
 # RuntimeError: boom
 ```
 
+*In TypeScript:*
+
+```typescript
+function a(): never { return b(); }
+function b(): never { return c(); }
+function c(): never { throw new Error("boom"); }
+
+a();
+// Error: boom
+//     at c (x.ts:3:34)
+//     at b (x.ts:2:27)
+//     at a (x.ts:1:27)
+//     at Object.<anonymous> (x.ts:5:1)
+```
+
 The traceback *is* the stack, printed bottom-up. Recursion is just a function pushing frames of itself. Each pending recursive call holds a frame until its child returns, so depth costs memory:
 
 ```python
@@ -163,6 +193,15 @@ def factorial(n):
     if n <= 1:
         return 1
     return n * factorial(n - 1)   # frame for n waits on n-1
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+function factorial(n: number): number {
+  if (n <= 1) return 1;
+  return n * factorial(n - 1);   // frame for n waits on n-1
+}
 ```
 
 Compute `factorial(10000)` and Python raises `RecursionError: maximum recursion depth exceeded` — its default limit is around 1000 frames, a deliberate guard against blowing the C stack underneath. The frames pile up because the multiplication `n * ...` happens *after* the recursive call returns; nothing can be discarded early.

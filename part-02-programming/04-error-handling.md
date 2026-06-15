@@ -150,6 +150,28 @@ func LoadConfig(path string) (*Config, error) {
 }
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { readFile } from "node:fs/promises";
+import { parse as parseToml } from "@iarna/toml";
+
+async function loadConfig(path: string): Promise<Config> {
+  let data: string;
+  try {
+    data = await readFile(path, "utf8");
+  } catch (err) {
+    // Error.cause preserves the underlying error, like %w
+    throw new Error(`load config ${JSON.stringify(path)}`, { cause: err });
+  }
+  try {
+    return parseToml(data) as Config;
+  } catch (err) {
+    throw new Error(`parse config ${JSON.stringify(path)}`, { cause: err });
+  }
+}
+```
+
 The `%w` verb is the load-bearing detail. It *wraps* the underlying error while adding context, so the caller gets a message like `load config "app.toml": open app.toml: no such file or directory` — the full causal chain, top to bottom. And because it wraps rather than reformats, `errors.Is(err, os.ErrNotExist)` and `errors.As(err, &pathErr)` still work up the stack. You add human-readable context without destroying the machine-readable type. Go's weakness is the other side of this coin: nothing in the language *forces* you to check `err`, so the discipline has to be imposed by tooling. That is what `errcheck` and `go vet` are for, and why they belong in CI rather than in a style guide nobody reads.
 
 ### Python: chain, never flatten
@@ -166,6 +188,24 @@ def load_user_profile(user_id: str) -> Profile:
     except DatabaseError as e:
         # `from e` preserves the original traceback and __cause__
         raise ProfileLoadError(f"load profile for user {user_id}") from e
+```
+
+*In TypeScript:*
+
+```typescript
+class ProfileLoadError extends Error {}
+
+async function loadUserProfile(userId: string): Promise<Profile> {
+  try {
+    return await db.fetchProfile(userId);
+  } catch (e) {
+    if (e instanceof DatabaseError) {
+      // { cause: e } preserves the original error and its stack, like `from e`
+      throw new ProfileLoadError(`load profile for user ${userId}`, { cause: e });
+    }
+    throw e;
+  }
+}
 ```
 
 When this propagates, Python prints both frames with "The above exception was the direct cause of the following exception," so the log shows the business intent and the root cause together. Dropping the `from e` — or worse, catching `Exception` and re-raising a bare string — throws that chain away. The catch you should be most suspicious of in Python is `except Exception:` without a re-raise, because it also swallows the programmer-error category that should have crashed.

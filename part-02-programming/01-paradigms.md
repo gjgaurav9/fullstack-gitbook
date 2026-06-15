@@ -93,6 +93,27 @@ def binary_search(items: list[int], target: int) -> int:
     return -1
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+function binarySearch(items: number[], target: number): number {
+  let lo = 0;
+  let hi = items.length - 1;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (items[mid] === target) {
+      return mid;
+    }
+    if (items[mid] < target) {
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return -1;
+}
+```
+
 This is intrinsically about *mutating two indices in a loop until they converge*. There is no natural list of values to transform. A "functional" binary search via recursion is fine, but the loop-and-mutate version is the clearest expression of the algorithm, and pretending otherwise produces worse code. Algorithms with index arithmetic, in-place sorts, and state machines are imperative at heart. Don't fight that.
 
 ### Object-oriented where invariants live
@@ -145,6 +166,21 @@ def refund(order_id: int):
     for line in refundable:
         total += line.amount
     return {"refund_total": total}       # declarative again: serializer decides the path
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// declarative: the route is a config, not code you execute
+app.post("/orders/:orderId/refund", (req, res) => {
+  const order = repo.get(Number(req.params.orderId)); // OO: repo owns the connection + caching
+  const refundable = computeRefundableLines(order.lines); // functional: pure, testable
+  let total = 0; // imperative: a simple, clear fold
+  for (const line of refundable) {
+    total += line.amount;
+  }
+  res.json({ refund_total: total }); // declarative again: serializer decides the path
+});
 ```
 
 This is not paradigm soup. Each layer uses the paradigm that fits its job: routing is declared, business logic is a pure function you can test without a database, the accumulation is a plain loop because it's clearer than a marginally faster `sum(...)`, and the repository encapsulates a stateful connection. The skill is choosing per-region, not per-codebase. The seams between these regions are where you put your tests: the pure `compute_refundable_lines` gets fast unit tests with no fixtures, the OO `repo` gets an integration test against a real database, and the declarative route gets a contract test. When paradigms are mixed on purpose, the test strategy falls out of the structure for free.
