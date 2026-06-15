@@ -128,6 +128,21 @@ url = s3.generate_presigned_url(
 # PUT the file bytes directly to `url`; no AWS credentials leave the server
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+const s3 = new S3Client({});
+const url = await getSignedUrl(
+  s3,
+  new PutObjectCommand({ Bucket: "acme-prod-uploads", Key: "user/42/avatar.png" }),
+  { expiresIn: 300 }, // seconds
+);
+// PUT the file bytes directly to `url`; no AWS credentials leave the server
+```
+
 ### EC2 and RDS: the long-running pair
 
 EC2 is a virtual machine; RDS is a managed database (Postgres, MySQL, and others) where AWS handles patching, backups, and failover. The pattern that comes up constantly: app server in a private subnet, database in a private subnet, security group referencing security group. With the AWS CLI, the security-group-as-source idiom looks like this:
@@ -169,6 +184,24 @@ def handler(event, context):
         "headers": {"Content-Type": "application/json"},
         "body": f'{{"message": "hello {name}"}}',
     }
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+import type { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+
+export const handler = async (
+  event: APIGatewayProxyEvent,
+): Promise<APIGatewayProxyResult> => {
+  const params = event.queryStringParameters ?? {};
+  const name = params.name ?? "world";
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "application/json" },
+    body: `{"message": "hello ${name}"}`,
+  };
+};
 ```
 
 Most teams define this with infrastructure-as-code rather than clicking in the console (see the Terraform chapter, 8.5). The relevant point here is identity: the function gets an *execution role* (the trust policy shown earlier) granting exactly the permissions its code needs — read from one queue, write to one table — and nothing more. The serverless model does not change the rules; it just attaches the role to a function instead of an instance.
