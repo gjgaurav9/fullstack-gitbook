@@ -118,12 +118,12 @@
 ## Part 11 — Testing & Quality
 
 * [Overview](part-11-testing/README.md)
-* The test pyramid, revisited
-* TDD and BDD
-* Property-based and mutation testing
-* Contract testing
-* Performance and load testing
-* Static analysis, linters, formatters
+* [The test pyramid, revisited](part-11-testing/01-test-pyramid.md)
+* [TDD and BDD](part-11-testing/02-tdd-bdd.md)
+* [Property-based and mutation testing](part-11-testing/03-property-mutation.md)
+* [Contract testing](part-11-testing/04-contract-testing.md)
+* [Performance and load testing](part-11-testing/05-performance-testing.md)
+* [Static analysis, linters, formatters](part-11-testing/06-static-analysis.md)
 
 ## Part 12 — AI Engineering
 
