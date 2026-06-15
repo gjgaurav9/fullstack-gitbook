@@ -80,6 +80,52 @@ for doc in res["documents"][0]:
     print(repr(doc))
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { ChromaClient } from "chromadb";
+import { DefaultEmbeddingFunction } from "@chroma-core/default-embed";
+
+// Pretend this is loaded from your docs
+const policy = `
+Monthly plans can be cancelled anytime. Refunds are available within
+30 days of the most recent charge for monthly subscribers.
+Annual plans are billed once per year. Refunds for annual plans are
+available within 14 days of purchase. After 14 days, annual plans are
+non-refundable but remain active until the end of the term.
+`;
+
+// NAIVE: split every 100 characters, no overlap, no structure
+function naiveChunk(text: string, size = 100): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i += size) {
+    out.push(text.slice(i, i + size));
+  }
+  return out;
+}
+
+const ef = new DefaultEmbeddingFunction({ modelName: "all-MiniLM-L6-v2" });
+const client = new ChromaClient();
+const col = await client.createCollection({
+  name: "docs_naive",
+  embeddingFunction: ef,
+});
+
+const chunks = naiveChunk(policy);
+await col.add({
+  ids: chunks.map((_, i) => String(i)),
+  documents: chunks,
+});
+
+const res = await col.query({
+  queryTexts: ["refund window for annual plans"],
+  nResults: 3,
+});
+for (const doc of res.documents[0]) {
+  console.log(JSON.stringify(doc));
+}
+```
+
 Output:
 
 ```text
@@ -115,6 +161,40 @@ def structured_chunk(text, target_chars=400, overlap_chars=80):
     return chunks
 ```
 
+*In TypeScript:*
+
+```typescript
+function structuredChunk(
+  text: string,
+  targetChars = 400,
+  overlapChars = 80,
+): string[] {
+  // Split into paragraphs first, then pack into target-sized chunks
+  const paras = text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  const chunks: string[] = [];
+  let cur = "";
+  for (const p of paras) {
+    if (cur.length + p.length <= targetChars) {
+      cur = cur ? `${cur}\n\n${p}` : p;
+    } else {
+      if (cur) {
+        chunks.push(cur);
+      }
+      // carry overlap from the tail of the previous chunk
+      const tail = cur ? cur.slice(-overlapChars) : "";
+      cur = tail ? `${tail}\n\n${p}` : p;
+    }
+  }
+  if (cur) {
+    chunks.push(cur);
+  }
+  return chunks;
+}
+```
+
 For real documents, don't hand-roll this past the prototype stage — use a library splitter that understands Markdown headings, code fences, and sentence boundaries (LangChain's `RecursiveCharacterTextSplitter`, LlamaIndex's `SentenceSplitter`, or `semchunk`). The principles that matter:
 
 - **Respect structure.** Split on headings and paragraphs before falling back to sentences, and never mid-word. A chunk should be a self-contained thought.
@@ -136,6 +216,23 @@ enriched = [
 ]
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+function contextualize(
+  chunk: string,
+  docTitle: string,
+  section: string,
+): string {
+  const header = `[Document: ${docTitle} | Section: ${section}]\n`;
+  return header + chunk;
+}
+
+const enriched = structuredChunk(policy).map((c) =>
+  contextualize(c, "Billing Policy", "Refunds"),
+);
+```
+
 Now "14 days" travels with the words "Annual plans" and "Refunds" in the same chunk, so the embedding actually encodes *annual refund*, not just *refund*. Anthropic's "contextual retrieval" technique generalizes this: use an LLM to write a one-sentence situating description for each chunk at index time. It costs tokens once, offline, and meaningfully cuts retrieval failures.
 
 ### Fix 3: retrieve wider, then rerank
@@ -155,6 +252,40 @@ def retrieve(col, query, k=20, n=4):
     return [c for _, c in ranked[:n]]
 
 top = retrieve(col, "refund window for annual plans")
+```
+
+*In TypeScript:*
+
+```typescript
+import type { Collection } from "chromadb";
+import { pipeline } from "@huggingface/transformers";
+
+const reranker = await pipeline(
+  "text-classification",
+  "Xenova/ms-marco-MiniLM-L-6-v2",
+);
+
+async function retrieve(
+  col: Collection,
+  query: string,
+  k = 20,
+  n = 4,
+): Promise<string[]> {
+  const res = await col.query({ queryTexts: [query], nResults: k });
+  const candidates = res.documents[0] as string[];
+  const scores = await Promise.all(
+    candidates.map(async (c) => {
+      const [out] = await reranker({ text: query, text_pair: c });
+      return out.score as number;
+    }),
+  );
+  const ranked = candidates
+    .map((c, i) => ({ score: scores[i], doc: c }))
+    .sort((a, b) => b.score - a.score);
+  return ranked.slice(0, n).map((r) => r.doc);
+}
+
+const top = await retrieve(col, "refund window for annual plans");
 ```
 
 The reranker promotes the annual-refund chunk above the lexically-similar monthly one. In production you can use a hosted reranking API or your provider's reranker; the architecture is identical. For keyword-heavy domains (product codes, error strings, names), add a lexical retriever (BM25) alongside the vector one and fuse the results — **hybrid search** — because embeddings are weak at exact-match tokens.
@@ -188,6 +319,34 @@ print(answer("What is the refund window for annual plans?", top))
 #     (Billing Policy, Refunds section)."
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import Anthropic from "@anthropic-ai/sdk";
+
+async function answer(query: string, chunks: string[]): Promise<string> {
+  // Best chunk closest to the question (last position)
+  const context = [...chunks].reverse().join("\n\n---\n\n");
+  const prompt =
+    "Answer using ONLY the context below. If the answer is not in the " +
+    'context, say "I don\'t know based on the available documents." ' +
+    "Cite the section you used.\n\n" +
+    `<context>\n${context}\n</context>\n\nQuestion: ${query}`;
+  const client = new Anthropic();
+  const msg = await client.messages.create({
+    model: "claude-opus-4-8", // or the latest model from your provider
+    max_tokens: 400,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const block = msg.content[0];
+  return block.type === "text" ? block.text : "";
+}
+
+console.log(await answer("What is the refund window for annual plans?", top));
+// -> "Annual plans can be refunded within 14 days of purchase
+//     (Billing Policy, Refunds section)."
+```
+
 The explicit "if not in context, say you don't know" instruction is not optional. Without it the model fills gaps from its training data, which is how you get plausible answers ungrounded in your docs. Grounding the model is half the battle; *permitting it to abstain* is the other half.
 
 ### Fix 5: evaluate retrieval, not just vibes
@@ -208,6 +367,30 @@ eval_set = [
 
 hits = sum(recall_at_k(retrieve(col, e["q"]), e["must_contain"]) for e in eval_set)
 print(f"Retrieval recall: {hits / len(eval_set):.0%}")
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+function recallAtK(retrievedChunks: string[], mustContain: string): boolean {
+  // Did retrieval surface the chunk holding the answer?
+  const joined = retrievedChunks.join(" ").toLowerCase();
+  return joined.includes(mustContain.toLowerCase());
+}
+
+const evalSet = [
+  { q: "refund window for annual plans?", mustContain: "14 days" },
+  { q: "can I cancel a monthly plan?", mustContain: "cancelled anytime" },
+  // ... 30+ more, drawn from real questions
+];
+
+let hits = 0;
+for (const e of evalSet) {
+  if (recallAtK(await retrieve(col, e.q), e.mustContain)) {
+    hits += 1;
+  }
+}
+console.log(`Retrieval recall: ${Math.round((hits / evalSet.length) * 100)}%`);
 ```
 
 Measure **retrieval** (did the right chunk get retrieved?) separately from **generation** (given the right chunk, did the model answer correctly?). Conflating them is the most common debugging mistake in RAG: when an answer is wrong, you must know whether retrieval missed the chunk or the model fumbled a chunk it had. For end-to-end answer quality, use an LLM-as-judge with a rubric (faithfulness to context, correctness, abstains when appropriate) or a framework like Ragas. Run the eval in CI so a chunking tweak that helps one query and breaks five others gets caught before it ships.

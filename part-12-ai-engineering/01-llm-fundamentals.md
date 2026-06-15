@@ -58,6 +58,28 @@ print(next(b.text for b in resp.content if b.type == "text"))
 print(resp.usage)   # input_tokens / output_tokens — this is what you pay for
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic(); // reads ANTHROPIC_API_KEY from env
+
+const resp = await client.messages.create({
+  model: "claude-opus-4-8",       // use the latest capable model your provider offers
+  max_tokens: 512,                // hard cap on OUTPUT tokens
+  system: "You extract structured data. Reply with JSON only.",
+  messages: [
+    { role: "user", content: 'Invoice total is $1,240.00. Return {"total_usd": number}.' },
+  ],
+});
+
+// resp.content is a list of blocks; pull the first text block.
+const text = resp.content.find((b) => b.type === "text");
+console.log(text?.text);
+console.log(resp.usage); // input_tokens / output_tokens — this is what you pay for
+```
+
 Two things to note before we go further. `max_tokens` limits the *output*, and the model can hit that ceiling mid-sentence — truncation is a normal, expected outcome you must handle, not an error. And `resp.usage` is your ground truth for cost and context budgeting; log it on every call.
 
 ### Counting tokens before you send
@@ -72,6 +94,18 @@ count = client.messages.count_tokens(
     messages=[{"role": "user", "content": some_long_document}],
 )
 print(count.input_tokens)
+```
+
+*In TypeScript:*
+
+```typescript
+// Provider-side count (most accurate; one network call):
+const count = await client.messages.countTokens({
+  model: "claude-opus-4-8",
+  system: "You extract structured data. Reply with JSON only.",
+  messages: [{ role: "user", content: someLongDocument }],
+});
+console.log(count.input_tokens);
 ```
 
 Token counts are model-specific — different model families tokenize the same text differently, so always pass the model you'll actually call. For OpenAI-family models the local equivalent is `tiktoken`; for open-weight models, the tokenizer ships with the model. The point is the same: know your token count *before* you send, so you can reject or chunk inputs that won't fit instead of discovering it at request time.
@@ -91,6 +125,22 @@ def get_total(invoice_text: str) -> float:
     )
     text = resp.content[0].text
     return float(text.split("$")[1])   # this will bite you
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// ANTI-PATTERN — do not ship this
+async function getTotal(invoiceText: string): Promise<number> {
+  const resp = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 256,
+    messages: [{ role: "user",
+                 content: `What is the total on this invoice?\n\n${invoiceText}` }],
+  });
+  const text = (resp.content[0] as Anthropic.TextBlock).text;
+  return parseFloat(text.split("$")[1]); // this will bite you
+}
 ```
 
 Every assumption here is wrong. It assumes the reply contains a `$`. It assumes exactly one. It assumes what follows is a clean float (it won't survive `"1,240.00"`, `"approximately 1,240"`, or `"1240 USD"`). It assumes the model read the data at all rather than guessing. And because the prompt asked an open question in natural language, the model's most probable continuation is a *sentence*, not a number.
@@ -135,6 +185,51 @@ def get_total(invoice_text: str) -> InvoiceResult:
         raise ValueError("Model could not confidently extract a total")
 
     return result
+```
+
+*The same idea in TypeScript:*
+
+```typescript
+import { z } from "zod";
+
+const InvoiceResult = z.object({
+  total_usd: z.number().nullable(), // null is a legal, meaningful answer
+  confident: z.boolean(),           // did the model actually find it?
+});
+type InvoiceResult = z.infer<typeof InvoiceResult>;
+
+const SYSTEM = `You extract the invoice total. Return ONLY a JSON object:
+{"total_usd": <number or null>, "confident": <true|false>}
+If the total is not clearly present, set total_usd to null and confident to false.
+Do not guess. Do not add commentary.`;
+
+async function getTotal(invoiceText: string): Promise<InvoiceResult> {
+  const resp = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 256,
+    system: SYSTEM,
+    messages: [{ role: "user", content: invoiceText }],
+  });
+
+  if (resp.stop_reason === "max_tokens") {
+    throw new Error("Output truncated; raise max_tokens or shrink input");
+  }
+
+  const raw = (resp.content.find((b) => b.type === "text") as Anthropic.TextBlock).text.trim();
+  let result: InvoiceResult;
+  try {
+    result = InvoiceResult.parse(JSON.parse(raw));
+  } catch (e) {
+    // The model broke the contract. Fail loudly; do not fall back to a guess.
+    throw new Error(`Unparseable model output: ${JSON.stringify(raw)}`, { cause: e });
+  }
+
+  if (!result.confident || result.total_usd === null) {
+    throw new Error("Model could not confidently extract a total");
+  }
+
+  return result;
+}
 ```
 
 The defensive version is longer, and that is the point. The extra lines encode the things the model will not do for you: guarantee structure, admit uncertainty, and stay within your token budget. Many providers also support a *structured output* or *tool-calling* mode that constrains the decoding to valid JSON conforming to a schema — prefer that over free-text-plus-`json.loads` when it's available, because it removes the "model emitted prose around the JSON" failure mode entirely. But even with enforced JSON, you still validate, because schema-valid does not mean *correct* — `{"total_usd": 0.0, "confident": true}` can be schema-valid and wrong.

@@ -83,6 +83,57 @@ TOOL_IMPLS = {
 }
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic();
+const MODEL = "claude-opus-4-8";
+
+const tools: Anthropic.Tool[] = [
+  {
+    name: "get_order_status",
+    description:
+      "Look up the current status of a customer order by its ID. " +
+      "Call this when the user asks where an order is or whether it shipped.",
+    input_schema: {
+      type: "object",
+      properties: {
+        order_id: { type: "string", description: "Order ID, e.g. 'A-1042'" },
+      },
+      required: ["order_id"],
+    },
+  },
+  {
+    name: "get_tracking_eta",
+    description:
+      "Get the estimated delivery date for a shipped order's tracking number.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tracking_number: { type: "string" },
+      },
+      required: ["tracking_number"],
+    },
+  },
+];
+
+// Your real implementations. These are the only code that ever *runs*.
+function getOrderStatus(orderId: string): Record<string, unknown> {
+  return { order_id: orderId, status: "shipped", tracking_number: "1Z999" };
+}
+
+function getTrackingEta(trackingNumber: string): Record<string, unknown> {
+  return { tracking_number: trackingNumber, eta: "2026-06-16" };
+}
+
+const TOOL_IMPLS: Record<string, (input: any) => Record<string, unknown>> = {
+  get_order_status: (input) => getOrderStatus(input.order_id),
+  get_tracking_eta: (input) => getTrackingEta(input.tracking_number),
+};
+```
+
 The loop itself is the load-bearing part. Notice the guardrails are explicit and checked *before* each model call, not bolted on as an afterthought:
 
 ```python
@@ -136,6 +187,72 @@ def run_agent(user_input: str, max_steps: int = 6) -> str:
     return "Could not complete within the step budget. Escalating to a human."
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+async function runAgent(userInput: string, maxSteps = 6): Promise<string> {
+  const messages: Anthropic.MessageParam[] = [
+    { role: "user", content: userInput },
+  ];
+
+  for (let step = 0; step < maxSteps; step++) {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 2048,
+      tools,
+      messages,
+    });
+
+    // The model is done — it produced a normal answer.
+    if (response.stop_reason === "end_turn") {
+      return response.content.find((b) => b.type === "text")!.text;
+    }
+
+    if (response.stop_reason === "tool_use") {
+      // Preserve the assistant turn verbatim (text + tool_use blocks).
+      messages.push({ role: "assistant", content: response.content });
+
+      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+      for (const block of response.content) {
+        if (block.type !== "tool_use") continue;
+        const impl = TOOL_IMPLS[block.name];
+        let result: string;
+        let isError: boolean;
+        if (impl === undefined) {
+          // Tool hallucination — see Pitfalls.
+          result = `No tool named '${block.name}'.`;
+          isError = true;
+        } else {
+          try {
+            result = JSON.stringify(impl(block.input));
+            isError = false;
+          } catch (exc) {
+            result = `Tool failed: ${exc}`;
+            isError = true;
+          }
+        }
+
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id, // MUST match the request
+          content: result,
+          is_error: isError,
+        });
+      }
+
+      messages.push({ role: "user", content: toolResults });
+      continue;
+    }
+
+    // Any other stop reason (refusal, max_tokens) is terminal for this loop.
+    return `Stopped early: ${response.stop_reason}`;
+  }
+
+  // We exhausted the step budget without a final answer.
+  return "Could not complete within the step budget. Escalating to a human.";
+}
+```
+
 Run it on "Where is order A-1042?" and the trace is: model requests `get_order_status` → we return `{"status": "shipped", "tracking_number": "1Z999"}` → model requests `get_tracking_eta` → we return the ETA → model produces "Order A-1042 shipped and is expected to arrive June 16." Three model calls, two tool executions, a bounded loop. The `max_steps` cap is the difference between this and the demo that hung.
 
 ### When an agent is the right call (and when it isn't)
@@ -178,6 +295,44 @@ class Budget:
         # Opus 4.8: $5 / 1M input, $25 / 1M output (verify current pricing).
         self.usd += usage.input_tokens * 5e-6 + usage.output_tokens * 25e-6
         self.steps += 1
+```
+
+*In TypeScript:*
+
+```typescript
+class Budget {
+  maxSteps: number;
+  maxUsd: number;
+  maxSeconds: number;
+  steps = 0;
+  usd = 0.0;
+  start = performance.now();
+
+  constructor(maxSteps = 6, maxUsd = 0.5, maxSeconds = 60) {
+    this.maxSteps = maxSteps;
+    this.maxUsd = maxUsd;
+    this.maxSeconds = maxSeconds;
+  }
+
+  exhausted(): string | null {
+    if (this.steps >= this.maxSteps) {
+      return "step cap";
+    }
+    if (this.usd >= this.maxUsd) {
+      return "cost cap";
+    }
+    if ((performance.now() - this.start) / 1000 > this.maxSeconds) {
+      return "time cap";
+    }
+    return null;
+  }
+
+  charge(usage: Anthropic.Usage): void {
+    // Opus 4.8: $5 / 1M input, $25 / 1M output (verify current pricing).
+    this.usd += usage.input_tokens * 5e-6 + usage.output_tokens * 25e-6;
+    this.steps += 1;
+  }
+}
 ```
 
 Check `budget.exhausted()` at the top of every loop iteration and on a tripped budget, return whatever partial result you have or escalate to a human queue. Three independent ceilings — steps, dollars, wall-clock — catch three different runaway modes. The opening scenario tripped none of them because none existed.

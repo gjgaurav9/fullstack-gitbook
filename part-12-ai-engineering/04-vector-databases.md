@@ -68,6 +68,23 @@ def top_k(query: np.ndarray, embeddings: np.ndarray, k: int = 5):
     return idx[np.argsort(-scores[idx])]
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// embeddings: N rows of length d, already L2-normalized; query: length d, normalized
+function topK(query: number[], embeddings: number[][], k = 5): number[] {
+  // cosine == dot product when normalized
+  const scores = embeddings.map((row) =>
+    row.reduce((sum, v, i) => sum + v * query[i], 0)
+  );
+  return scores
+    .map((score, idx) => ({ score, idx }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k)
+    .map((s) => s.idx);
+}
+```
+
 If your corpus fits in RAM, rarely changes, and you don't need cross-process concurrency or live metadata filtering, ship this. Don't add infrastructure to solve a problem you don't have.
 
 ### pgvector: the database you probably already run
@@ -126,6 +143,31 @@ rows = conn.execute(
 ).fetchall()
 ```
 
+*In TypeScript:*
+
+```typescript
+import { Client } from "pg";
+import pgvector from "pgvector/pg";
+
+const conn = new Client({ connectionString: "postgresql://localhost/app" });
+await conn.connect();
+await pgvector.registerType(conn);
+
+const queryVec = pgvector.toSql(
+  await embed("can I export to CSV on the Pro tier?")
+); // -> number[], len 1536
+const { rows } = await conn.query(
+  `
+  SELECT content, 1 - (embedding <=> $1) AS similarity
+  FROM doc_chunks
+  WHERE tier = $2
+  ORDER BY embedding <=> $1
+  LIMIT 5
+  `,
+  [queryVec, "pro"]
+);
+```
+
 ### A dedicated vector DB: Qdrant
 
 When you outgrow Postgres — hundreds of millions of vectors, sharding, per-vector payload filtering at high QPS — a purpose-built store earns its keep. Qdrant is a strong open-source default; the API shape is representative of Pinecone and Weaviate too.
@@ -156,6 +198,32 @@ hits = client.query_points(
 ).points
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+import { QdrantClient } from "@qdrant/js-client-rest";
+
+const client = new QdrantClient({ url: "http://localhost:6333" });
+
+await client.createCollection("doc_chunks", {
+  vectors: { size: 1536, distance: "Cosine" },
+});
+
+await client.upsert("doc_chunks", {
+  points: [
+    { id: 1, vector: await embed(chunk), payload: { tier: "pro", content: chunk } },
+  ],
+});
+
+// Filtered ANN search — the filter is applied *during* HNSW traversal,
+// not after, so recall holds even with selective filters.
+const { points: hits } = await client.query("doc_chunks", {
+  query: await embed("can I export to CSV on the Pro tier?"),
+  filter: { must: [{ key: "tier", match: { value: "pro" } }] },
+  limit: 5,
+});
+```
+
 The line that matters: dedicated vector DBs build **filterable indexes** so metadata constraints are enforced inside the graph walk. That's the structural reason they beat "embed-then-filter-in-app-code."
 
 ### Hybrid search: dense plus keyword
@@ -170,6 +238,21 @@ def rrf(dense_ids: list, sparse_ids: list, k: int = 60) -> list:
         for rank, doc_id in enumerate(ranked):
             scores[doc_id] = scores.get(doc_id, 0) + 1 / (k + rank)
     return sorted(scores, key=scores.get, reverse=True)
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// Fuse two ranked lists by reciprocal rank. Higher score = better.
+function rrf<T>(denseIds: T[], sparseIds: T[], k = 60): T[] {
+  const scores = new Map<T, number>();
+  for (const ranked of [denseIds, sparseIds]) {
+    ranked.forEach((docId, rank) => {
+      scores.set(docId, (scores.get(docId) ?? 0) + 1 / (k + rank));
+    });
+  }
+  return [...scores.keys()].sort((a, b) => scores.get(b)! - scores.get(a)!);
+}
 ```
 
 RRF needs no score normalization between the two systems — it only uses rank position, which is why it's robust and ubiquitous. The `k = 60` constant is the value used in the original RRF paper and the common default. Qdrant and Weaviate support hybrid natively; with pgvector you combine the `<=>` ordering with Postgres full-text search (`tsvector` / `ts_rank`) and fuse in SQL or app code. (This connects directly to the RAG chapter's reranking step — fuse, then optionally rerank the fused top-N with a cross-encoder.)

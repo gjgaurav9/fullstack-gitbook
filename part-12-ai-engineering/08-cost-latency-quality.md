@@ -56,6 +56,28 @@ def triage(ticket_text: str) -> str:
     return next(b.text for b in resp.content if b.type == "text")
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { readFileSync } from "fs";
+import Anthropic from "@anthropic-ai/sdk";
+
+const client = new Anthropic();
+
+const ROUTING_PLAYBOOK = readFileSync("routing_playbook.md", "utf-8"); // ~6,000 tokens, static
+
+async function triage(ticketText: string): Promise<string> {
+  const resp = await client.messages.create({
+    model: "claude-opus-4-8", // frontier model for everything
+    max_tokens: 1000,
+    system: `${ROUTING_PLAYBOOK}\n\nClassify, summarize, and route this ticket.`,
+    messages: [{ role: "user", content: ticketText }],
+  });
+  const block = resp.content.find((b) => b.type === "text");
+  return block && block.type === "text" ? block.text : "";
+}
+```
+
 Three problems, in the order we'll fix them: the playbook is re-sent uncached every call; the most expensive model handles even trivial tickets; and the caller blocks until the full response lands.
 
 ### Lever 1: prompt caching for the static prefix
@@ -84,6 +106,34 @@ def triage_cached(ticket_text: str) -> str:
     return next(b.text for b in resp.content if b.type == "text")
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+async function triageCached(ticketText: string): Promise<string> {
+  const resp = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 1000,
+    system: [
+      {
+        type: "text",
+        text: ROUTING_PLAYBOOK,
+        cache_control: { type: "ephemeral" }, // cache the static prefix
+      },
+      { type: "text", text: "Classify, summarize, and route this ticket." },
+    ],
+    messages: [{ role: "user", content: ticketText }],
+  });
+  // Verify the cache is actually working:
+  const u = resp.usage;
+  console.log(
+    `cache_write=${u.cache_creation_input_tokens} ` +
+      `cache_read=${u.cache_read_input_tokens} uncached=${u.input_tokens}`,
+  );
+  const block = resp.content.find((b) => b.type === "text");
+  return block && block.type === "text" ? block.text : "";
+}
+```
+
 Caching is a **prefix match** — any byte change anywhere before the cache breakpoint invalidates everything after it. The single most common reason a cache silently never hits is a `datetime.now()` or a per-request UUID interpolated into the prefix. After the first request, `cache_read_input_tokens` should be large and `input_tokens` small. If `cache_read_input_tokens` stays zero across identical-prefix calls, something is mutating the prefix; diff the rendered bytes between two requests to find it. (See Part 6 on cache invalidation generally — the prefix-hash idea is the same one databases use for query plan caches.)
 
 ### Lever 2: streaming for perceived latency
@@ -105,6 +155,32 @@ def triage_streaming(ticket_text: str):
             yield text                      # render token-by-token in the UI
         final = stream.get_final_message()  # full message + usage when done
     print(f"output_tokens={final.usage.output_tokens}")
+```
+
+*In TypeScript:*
+
+```typescript
+async function* triageStreaming(ticketText: string): AsyncGenerator<string> {
+  const stream = client.messages.stream({
+    model: "claude-opus-4-8",
+    max_tokens: 1000,
+    system: [
+      {
+        type: "text",
+        text: ROUTING_PLAYBOOK,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [{ role: "user", content: ticketText }],
+  });
+  for await (const event of stream) {
+    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      yield event.delta.text; // render token-by-token in the UI
+    }
+  }
+  const final = await stream.finalMessage(); // full message + usage when done
+  console.log(`output_tokens=${final.usage.output_tokens}`);
+}
 ```
 
 A useful instinct: time-to-first-token is what users *feel*; time-to-last-token is what your throughput budget *pays for*. Optimize the first for chat, the second for pipelines.
@@ -160,6 +236,70 @@ def classify_with_cascade(ticket_text: str) -> dict:
             "model_used": "claude-opus-4-8"}
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+async function classifyWithCascade(
+  ticketText: string,
+): Promise<Record<string, unknown>> {
+  // 1. Cheap model first, with a structured confidence signal.
+  const cheap = await client.messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 300,
+    system: [
+      {
+        type: "text",
+        text: ROUTING_PLAYBOOK,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [{ role: "user", content: ticketText }],
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: {
+            category: { type: "string" },
+            confidence: { type: "number" }, // model's self-rated 0..1
+          },
+          required: ["category", "confidence"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+  const cheapBlock = cheap.content.find((b) => b.type === "text");
+  const result: Record<string, unknown> = JSON.parse(
+    cheapBlock && cheapBlock.type === "text" ? cheapBlock.text : "{}",
+  );
+
+  // 2. Escalate only when the cheap model is unsure.
+  if ((result.confidence as number) >= 0.75) {
+    result.model_used = "claude-haiku-4-5";
+    return result;
+  }
+
+  const strong = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 300,
+    system: [
+      {
+        type: "text",
+        text: ROUTING_PLAYBOOK,
+        cache_control: { type: "ephemeral" },
+      },
+    ],
+    messages: [{ role: "user", content: ticketText }],
+  });
+  const strongBlock = strong.content.find((b) => b.type === "text");
+  return {
+    category: strongBlock && strongBlock.type === "text" ? strongBlock.text : "",
+    model_used: "claude-opus-4-8",
+  };
+}
+```
+
 The catch worth naming out loud: a model's self-reported confidence is a soft signal, not a calibrated probability. Validate it against labeled data before you trust the threshold — if the cheap model is confidently wrong some of the time, your cascade leaks those errors straight through. Tune the threshold against your eval set, and treat the escalation rate as a metric you watch: if almost everything escalates, the cascade is costing you *more* than just running the big model, because you're paying for both.
 
 ### Lever 5: semantic caching — skip the model entirely
@@ -192,6 +332,42 @@ class SemanticCache:
         self.values.append(answer)
 ```
 
+*In TypeScript:*
+
+```typescript
+// Toy in-memory semantic cache. In production back this with a vector DB
+// (pgvector, Pinecone, Qdrant — see Part 12's vector database chapter).
+class SemanticCache {
+  private embed: (text: string) => number[]; // text -> normalized vector
+  private threshold: number;
+  private keys: number[][] = [];
+  private values: string[] = [];
+
+  constructor(embedFn: (text: string) => number[], threshold = 0.92) {
+    this.embed = embedFn;
+    this.threshold = threshold;
+  }
+
+  get(query: string): string | null {
+    if (this.keys.length === 0) {
+      return null;
+    }
+    const q = this.embed(query);
+    const sims = this.keys.map((k) => k.reduce((sum, ki, i) => sum + q[i] * ki, 0));
+    let best = 0;
+    for (let i = 1; i < sims.length; i++) {
+      if (sims[i] > sims[best]) best = i;
+    }
+    return sims[best] >= this.threshold ? this.values[best] : null;
+  }
+
+  put(query: string, answer: string): void {
+    this.keys.push(this.embed(query));
+    this.values.push(answer);
+  }
+}
+```
+
 Semantic caching is powerful for high-traffic, low-variation surfaces — FAQ bots, doc search, repeated analytics questions — where the same intent arrives phrased a dozen ways. The threshold is the entire ballgame. Set it too low and you serve a confidently wrong answer to a subtly different question ("how do I *cancel* my plan" matching a cached "how do I *change* my plan"). Set it too high and you almost never hit. Calibrate it on real traffic, log every hit so you can audit false positives, and never use it for requests whose answer depends on time, the specific user, or anything outside the query text.
 
 ### Lever 6: batching for non-urgent work
@@ -220,6 +396,29 @@ batch = client.messages.batches.create(
 # Poll batch.processing_status until "ended", then stream results by custom_id.
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+const batch = await client.messages.batches.create({
+  requests: backlog.map((text, i) => ({
+    custom_id: `ticket-${i}`,
+    params: {
+      model: "claude-haiku-4-5",
+      max_tokens: 300,
+      system: [
+        {
+          type: "text",
+          text: ROUTING_PLAYBOOK,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      messages: [{ role: "user", content: text }],
+    },
+  })),
+});
+// Poll batch.processing_status until "ended", then stream results by custom_id.
+```
+
 ### Measuring the triangle
 
 You cannot manage what you don't measure. Capture per-request cost and latency from `usage` and wall-clock timing, and report **p95**, not the mean — the mean hides the tail your users actually complain about.
@@ -244,6 +443,32 @@ def call_with_metrics(model: str, **kwargs) -> tuple[object, dict]:
         + u.output_tokens / 1e6 * p["out"]
     )
     return resp, {"latency_ms": latency_ms, "cost_usd": cost, "model": model}
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+async function callWithMetrics(
+  model: string,
+  params: Omit<Anthropic.MessageCreateParamsNonStreaming, "model">,
+): Promise<[Anthropic.Message, Record<string, unknown>]> {
+  // Per-MTok rates; keep these in one place and update when pricing changes.
+  const PRICES: Record<string, { in: number; out: number; cache_read: number }> = {
+    "claude-opus-4-8": { in: 5.0, out: 25.0, cache_read: 0.5 },
+    "claude-haiku-4-5": { in: 1.0, out: 5.0, cache_read: 0.1 },
+  };
+  const t0 = performance.now();
+  const resp = await client.messages.create({ model, ...params });
+  const latencyMs = performance.now() - t0;
+
+  const u = resp.usage;
+  const p = PRICES[model];
+  const cost =
+    (u.input_tokens / 1e6) * p.in +
+    ((u.cache_read_input_tokens ?? 0) / 1e6) * p.cache_read +
+    (u.output_tokens / 1e6) * p.out;
+  return [resp, { latency_ms: latencyMs, cost_usd: cost, model }];
+}
 ```
 
 Emit these as structured logs or metrics (Part 9 covers the observability stack — treat `cost_usd` and `latency_ms` as first-class custom metrics with per-route dimensions). This is the foundation of **AI FinOps**: a dashboard of cost-per-request and p95 latency *broken down by route and model*, with alerts when either drifts. The number that matters most is cost-per-successful-outcome, not cost-per-token — a cheap model that fails and forces a retry is more expensive than the model you skipped.

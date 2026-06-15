@@ -71,6 +71,44 @@ if __name__ == "__main__":
     mcp.run(transport="stdio")   # subprocess transport
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// weather_server.ts
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+
+const mcp = new McpServer({ name: "weather", version: "1.0.0" });
+
+mcp.registerTool(
+  "get_forecast",
+  {
+    description: "Return a short weather forecast for a city.",
+    inputSchema: {
+      city: z.string().describe('City name, e.g. "Reykjavik".'),
+      days: z.number().int().default(3).describe("Number of days to forecast (1-7)."),
+    },
+  },
+  async ({ city, days }) => {
+    // In real life: call a weather API here.
+    return { content: [{ type: "text", text: `${city}: clear, 12C, for the next ${days} days.` }] };
+  },
+);
+
+mcp.registerResource(
+  "stations",
+  "weather://stations",
+  { description: "The set of stations this server can report on." },
+  async (uri) => ({
+    contents: [{ uri: uri.href, text: "Reykjavik, Akureyri, Vik" }],
+  }),
+);
+
+const transport = new StdioServerTransport(); // subprocess transport
+await mcp.connect(transport);
+```
+
 That's a real, spec-compliant server. The docstring becomes the tool description the model sees; the type hints become the input schema. Run it as a subprocess and the host connects over stdio. Switch one line — `transport="streamable-http"` — and the same server is reachable over HTTP, no other changes.
 
 ### What actually crosses the wire
