@@ -17,12 +17,12 @@
 ## Part 2 — Programming Foundations
 
 * [Overview](part-02-programming/README.md)
-* Paradigms and when to mix them
-* Type systems, from dynamic to dependent
-* Memory models in three languages
-* Error handling that survives refactors
-* Async, threads, and the event loop
-* Functions, closures, and the call stack
+* [Paradigms and when to mix them](part-02-programming/01-paradigms.md)
+* [Type systems, from dynamic to dependent](part-02-programming/02-type-systems.md)
+* [Memory models in three languages](part-02-programming/03-memory-models.md)
+* [Error handling that survives refactors](part-02-programming/04-error-handling.md)
+* [Async, threads, and the event loop](part-02-programming/05-async.md)
+* [Functions, closures, and the call stack](part-02-programming/06-functions-closures.md)
 
 ## Part 3 — Version Control & Collaboration
 
