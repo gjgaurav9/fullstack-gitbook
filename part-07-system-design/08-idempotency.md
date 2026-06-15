@@ -64,6 +64,31 @@ def charge(customer_id: str, amount_cents: int):
     raise RuntimeError("charge failed after retries")
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// WRONG: at-least-once delivery, non-idempotent processing -> double charge
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function charge(customerId: string, amountCents: number): Promise<unknown> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const resp = await fetch("https://api.processor.test/v1/charges", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer: customerId, amount: amountCents }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return await resp.json();
+    } catch {
+      await sleep(2 ** attempt * 1000); // back off and retry
+    }
+  }
+  throw new Error("charge failed after retries");
+}
+```
+
 If the first request's *response* is lost, the processor has already created the charge. The retry creates a second one. The retry logic is correct; the operation it retries is not safe to repeat.
 
 ### The idempotency key fix
@@ -92,6 +117,38 @@ def charge(customer_id: str, amount_cents: int):
     raise RuntimeError("charge failed after retries")
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+// RIGHT: at-least-once delivery + idempotent processing -> exactly-once effect
+import { randomUUID } from "node:crypto";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function charge(customerId: string, amountCents: number): Promise<unknown> {
+  // Generate ONCE, outside the retry loop. The key is the operation's identity.
+  const idemKey = randomUUID();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const resp = await fetch("https://api.processor.test/v1/charges", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idemKey,
+        },
+        body: JSON.stringify({ customer: customerId, amount: amountCents }),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return await resp.json();
+    } catch {
+      await sleep(2 ** attempt * 1000);
+    }
+  }
+  throw new Error("charge failed after retries");
+}
+```
+
 The single most important line is generating `idem_key` *outside* the loop. Generate it inside and every retry gets a fresh key, defeating the entire mechanism — a real and common bug.
 
 ### Choosing the key: natural vs synthetic
@@ -110,6 +167,26 @@ def handle_charge(key, customer, amount, db):
     result = processor.create_charge(customer, amount)  # ...both charge!
     db.set(key, {"response": result})
     return result
+```
+
+*In TypeScript:*
+
+```typescript
+// WRONG: check-then-act has a race window under concurrent retries
+async function handleCharge(
+  key: string,
+  customer: string,
+  amount: number,
+  db: KeyStore,
+): Promise<unknown> {
+  const existing = await db.get(key); // two requests both see undefined here...
+  if (existing) {
+    return existing.response;
+  }
+  const result = await processor.createCharge(customer, amount); // ...both charge!
+  await db.set(key, { response: result });
+  return result;
+}
 ```
 
 Two retries arriving within milliseconds (a client timeout plus a near-simultaneous retry is the classic trigger) both pass the `if` and both call the processor. The correct version pushes uniqueness into the database with a constraint and a transaction, so the *database* arbitrates the race:
@@ -141,6 +218,47 @@ def handle_charge(key, customer, amount, db):
             (json.dumps(result), key),
         )
         return result
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// RIGHT: the unique constraint is the lock; the DB serializes concurrent retries
+async function handleCharge(
+  key: string,
+  customer: string,
+  amount: number,
+  db: Db,
+): Promise<unknown> {
+  return db.transaction(async (tx) => {
+    try {
+      // INSERT ... the key column has a UNIQUE constraint
+      await tx.execute(
+        "INSERT INTO idempotency_keys (key, status) VALUES ($1, 'in_progress')",
+        [key],
+      );
+    } catch (err) {
+      if (!(err instanceof UniqueViolation)) throw err;
+      const row = (
+        await tx.execute(
+          "SELECT status, response FROM idempotency_keys WHERE key = $1",
+          [key],
+        )
+      ).rows[0];
+      if (row.status === "completed") {
+        return row.response; // replay the stored result
+      }
+      throw new Conflict(409); // original still running; client retries later
+    }
+
+    const result = await processor.createCharge(customer, amount);
+    await tx.execute(
+      "UPDATE idempotency_keys SET status='completed', response=$1 WHERE key=$2",
+      [JSON.stringify(result), key],
+    );
+    return result;
+  });
+}
 ```
 
 ```sql
@@ -177,6 +295,28 @@ def consume(msg, db):
         if inserted is None:
             return                        # already processed; ack and move on
         apply_effect(msg, db)             # same transaction as the dedup insert
+```
+
+*In TypeScript:*
+
+```typescript
+// Consumer dedup: derive a stable key from the message, not from arrival time
+async function consume(msg: Message, db: Db): Promise<void> {
+  const dedupKey = msg.headers["event_id"]; // producer-assigned, stable across redelivery
+  await db.transaction(async (tx) => {
+    const inserted = (
+      await tx.execute(
+        "INSERT INTO processed_events (event_id) VALUES ($1) " +
+          "ON CONFLICT DO NOTHING RETURNING event_id",
+        [dedupKey],
+      )
+    ).rows[0];
+    if (inserted === undefined) {
+      return; // already processed; ack and move on
+    }
+    await applyEffect(msg, tx); // same transaction as the dedup insert
+  });
+}
 ```
 
 > **Connect the dots:** This is why the saga pattern (Part 7, chapter 6) requires every step *and* every compensating action to be idempotent — a saga coordinator retries steps after crashes, so each step is delivered at-least-once by construction. It's also why event-sourced projections (chapter 5) must tolerate replaying the same event: rebuilding a read model is just deliberate at-least-once delivery of your entire event log.

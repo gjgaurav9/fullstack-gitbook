@@ -91,6 +91,43 @@ def handle_append_entries(self, req):
     return AppendResult(term=self.current_term, success=True)
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// Simplified Raft AppendEntries handler (follower side).
+// This is the heart of replication safety — reject anything
+// that would create a divergent log.
+handleAppendEntries(req: AppendEntriesRequest): AppendResult {
+  // 1. Reject stale leaders.
+  if (req.term < this.currentTerm) {
+    return { term: this.currentTerm, success: false };
+  }
+
+  // A valid leader exists for this term: reset our election timer.
+  this.resetElectionTimeout();
+  this.currentTerm = req.term;
+  this.state = State.Follower;
+
+  // 2. Log-matching check: our log must contain an entry at
+  //    prevLogIndex whose term equals prevLogTerm.
+  if (!this.logMatches(req.prevLogIndex, req.prevLogTerm)) {
+    return { term: this.currentTerm, success: false };
+  }
+
+  // 3. Delete conflicting suffix, then append new entries.
+  this.truncateConflicts(req.entries, req.prevLogIndex);
+  this.append(req.entries);
+
+  // 4. Advance commit index to what the leader has committed,
+  //    but never past what we actually hold.
+  if (req.leaderCommit > this.commitIndex) {
+    this.commitIndex = Math.min(req.leaderCommit, this.lastLogIndex());
+  }
+
+  return { term: this.currentTerm, success: true };
+}
+```
+
 The log-matching property in step 2 is the safety lever: if two logs contain an entry with the same index and term, they are identical in all preceding entries. A follower that's behind keeps rejecting until the leader walks its `prev_log_index` backward to the last point they agree on, then streams forward. This is how a node that missed messages catches up without ever applying a write out of order.
 
 The crucial safety rule: a leader may only consider an entry committed if it's replicated on a majority *and* the entry belongs to the leader's current term. This prevents a subtle bug where an old entry from a previous term appears committed and is then overwritten — the scenario Figure 8 in the Raft paper walks through.

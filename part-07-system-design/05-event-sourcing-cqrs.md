@@ -72,6 +72,46 @@ def rebuild(events: Iterable) -> Account:
     return state
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// Events: immutable facts, past tense. Amounts in integer cents.
+interface AccountOpened { type: "AccountOpened"; accountId: string }
+interface Charged { type: "Charged"; accountId: string; amount: number; cause: string }
+interface Refunded { type: "Refunded"; accountId: string; amount: number; cause: string }
+
+type Event = AccountOpened | Charged | Refunded;
+
+// State is a pure fold over the event sequence.
+interface Account {
+  readonly balance: number;
+  readonly opened: boolean;
+}
+
+const emptyAccount: Account = { balance: 0, opened: false };
+
+function apply(state: Account, event: Event): Account {
+  switch (event.type) {
+    case "AccountOpened":
+      return { balance: 0, opened: true };
+    case "Charged":
+      return { balance: state.balance + event.amount, opened: state.opened };
+    case "Refunded":
+      return { balance: state.balance - event.amount, opened: state.opened };
+    default:
+      return state;
+  }
+}
+
+function rebuild(events: Iterable<Event>): Account {
+  let state = emptyAccount;
+  for (const e of events) {
+    state = apply(state, e);
+  }
+  return state;
+}
+```
+
 The command handler is where validation lives. It loads current state by folding, decides, and returns *new* events — it does not mutate anything itself:
 
 ```python
@@ -82,6 +122,26 @@ def handle_refund(history: list, account_id: str, amount: int, cause: str) -> li
     if amount > state.balance:
         raise ValueError("refund exceeds balance")
     return [Refunded(account_id=account_id, amount=amount, cause=cause)]
+```
+
+*In TypeScript:*
+
+```typescript
+function handleRefund(
+  history: Event[],
+  accountId: string,
+  amount: number,
+  cause: string,
+): Event[] {
+  const state = rebuild(history);
+  if (!state.opened) {
+    throw new Error("account not open");
+  }
+  if (amount > state.balance) {
+    throw new Error("refund exceeds balance");
+  }
+  return [{ type: "Refunded", accountId, amount, cause }];
+}
 ```
 
 Notice the symmetry with Git from Part 3: events are immutable, content is append-only, and "state" is a walk over an ordered history. If that model felt natural for commits, it will feel natural here.
@@ -127,6 +187,40 @@ def project_balances(conn):
                      r["global_seq"])
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+import type { PoolClient } from "pg";
+
+async function projectBalances(conn: PoolClient): Promise<void> {
+  const { rows: offsetRows } = await conn.query(
+    "SELECT last_seq FROM projection_offsets WHERE name='balances'",
+  );
+  const pos = offsetRows[0].last_seq;
+  const { rows } = await conn.query(
+    "SELECT global_seq, stream_id, event_type, payload " +
+      "FROM events WHERE global_seq > $1 ORDER BY global_seq",
+    [pos],
+  );
+  for (const r of rows) {
+    if (r.event_type === "Charged" || r.event_type === "Refunded") {
+      const delta = r.payload.amount;
+      const sign = r.event_type === "Charged" ? 1 : -1;
+      await conn.query(
+        "INSERT INTO balances(account_id, balance) VALUES($1,$2) " +
+          "ON CONFLICT (account_id) DO UPDATE SET balance = balances.balance + $2",
+        [r.stream_id, sign * delta],
+      );
+    }
+    // advance offset in the SAME transaction as the write
+    await conn.query(
+      "UPDATE projection_offsets SET last_seq=$1 WHERE name='balances'",
+      [r.global_seq],
+    );
+  }
+}
+```
+
 The critical detail: advance the offset in the **same transaction** as the projection write. If they're separate, a crash between them either double-applies an event or skips one. Atomic offset + write gives you exactly-once *effect* on the projection even though delivery is at-least-once (see Part 7's idempotency chapter).
 
 ### Snapshotting
@@ -141,6 +235,30 @@ def load(stream_id, store):
     for e in store.events_after(stream_id, after):
         state = apply(state, e)
     return state
+```
+
+*In TypeScript:*
+
+```typescript
+interface Snapshot {
+  state: Account;
+  version: number;
+}
+
+interface Store {
+  latestSnapshot(streamId: string): Snapshot | null; // {state, version} or null
+  eventsAfter(streamId: string, version: number): Iterable<Event>;
+}
+
+function load(streamId: string, store: Store): Account {
+  const snap = store.latestSnapshot(streamId); // {state, version} or null
+  let state = snap ? snap.state : emptyAccount;
+  const after = snap ? snap.version : 0;
+  for (const e of store.eventsAfter(streamId, after)) {
+    state = apply(state, e);
+  }
+  return state;
+}
 ```
 
 Snapshots are an *optimization, never a source of truth*. They must always be reconstructible by replaying the log, which means the rule is: if you change the `apply` logic in a way that alters folded state, you must discard and regenerate snapshots, or they'll silently serve stale shapes. Take them on a cadence (every N events, or by age), not on every write.

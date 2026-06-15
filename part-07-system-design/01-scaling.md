@@ -76,6 +76,37 @@ def add_to_cart():
     return jsonify(cart=session["cart"])
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// app.ts — DO NOT SHIP THIS BEHIND A LOAD BALANCER
+import express from "express";
+import { randomBytes } from "node:crypto";
+
+const app = express();
+app.use(express.json());
+
+// In-memory session store. Lives inside THIS process only.
+const SESSIONS: Record<string, { user: string; cart: string[] }> = {};
+
+app.post("/login", (req, res) => {
+  const user = req.body.user;
+  const token = randomBytes(16).toString("base64url");
+  SESSIONS[token] = { user, cart: [] };
+  res.json({ token });
+});
+
+app.post("/cart/add", (req, res) => {
+  const token = req.headers["authorization"] as string;
+  const session = SESSIONS[token]; // undefined on a different instance
+  if (session === undefined) {
+    return res.status(401).json({ error: "not logged in" });
+  }
+  session.cart.push(req.body.item);
+  res.json({ cart: session.cart });
+});
+```
+
 Run one copy and it works perfectly. The bug is invisible until the second instance exists. With three instances behind a round-robin balancer, a login that lands on instance #1 writes the token into #1's `SESSIONS`. The follow-up `/cart/add` round-robins to instance #2, whose `SESSIONS` has never seen that token, and the user gets a 401. The application is *correct* and *unscalable* at the same time. No amount of CPU fixes it.
 
 The seductive bad fix is to enable sticky sessions on the load balancer so every user is pinned to the instance that logged them in. It works until that instance restarts during a deploy — and now everyone pinned to it is logged out at once, and your load is unevenly distributed because the balancer can't freely rebalance. Stickiness trades away the redundancy you scaled out to get.
@@ -113,6 +144,42 @@ def add_to_cart():
     return jsonify(cart=session["cart"])
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+// app.ts — stateless, safe behind any number of instances
+import express from "express";
+import { randomBytes } from "node:crypto";
+import { createClient } from "redis";
+
+const app = express();
+app.use(express.json());
+
+const r = createClient({ url: process.env.REDIS_URL });
+await r.connect();
+
+const SESSION_TTL = 60 * 60 * 24; // 24h, enforced by Redis, no cleanup code needed
+
+app.post("/login", async (req, res) => {
+  const user = req.body.user;
+  const token = randomBytes(16).toString("base64url");
+  await r.set(`sess:${token}`, JSON.stringify({ user, cart: [] }), { EX: SESSION_TTL });
+  res.json({ token });
+});
+
+app.post("/cart/add", async (req, res) => {
+  const token = req.headers["authorization"] as string;
+  const raw = await r.get(`sess:${token}`);
+  if (raw === null) {
+    return res.status(401).json({ error: "not logged in" });
+  }
+  const session = JSON.parse(raw) as { user: string; cart: string[] };
+  session.cart.push(req.body.item);
+  await r.set(`sess:${token}`, JSON.stringify(session), { EX: SESSION_TTL }); // refreshes TTL -> sliding expiry
+  res.json({ cart: session.cart });
+});
+```
+
 Now any instance can serve any request because the source of truth is Redis, not a local dict. You can run 1 instance or 100; the load balancer is free to send each request anywhere. Scaling out becomes a number you change:
 
 ```yaml
@@ -147,6 +214,19 @@ def get_user(user_id):                 # read path -> replica
 
 def update_email(user_id, email):      # write path -> primary
     primary_pool.execute("UPDATE users SET email = %s WHERE id = %s", email, user_id)
+```
+
+*In TypeScript:*
+
+```typescript
+// Route reads to a replica, writes to the primary.
+function getUser(userId: number) {                  // read path -> replica
+  return replicaPool.query("SELECT * FROM users WHERE id = $1", [userId]);
+}
+
+function updateEmail(userId: number, email: string) { // write path -> primary
+  return primaryPool.query("UPDATE users SET email = $1 WHERE id = $2", [email, userId]);
+}
 ```
 
 The cost you pay is **replication lag**: a replica is some milliseconds-to-seconds behind the primary. If a user updates their email and the very next page-load reads from a lagging replica, they see the old value. The fix is *read-your-writes* — route a user's reads to the primary for a short window after they write, or read from the primary for flows where staleness is unacceptable (e.g. "did my payment go through?").

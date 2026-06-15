@@ -109,6 +109,31 @@ def readyz():
     return jsonify(checks), 503           # 503 -> LB stops sending traffic
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// Express: distinguish liveness from readiness.
+// Liveness  = "am I alive?" (restart me if not)
+// Readiness = "can I serve traffic right now?" (pull me from the LB if not)
+
+app.get("/livez", (_req, res) => {
+  res.status(200).send("ok"); // cheap; only fails if the process is wedged
+});
+
+app.get("/readyz", (_req, res) => {
+  const checks = {
+    db: dbPool.healthy(),        // can I reach my primary dependency?
+    cache: redis.pingOk(),
+    warm: modelLoaded(),         // finished startup warmup?
+  };
+  if (Object.values(checks).every(Boolean)) {
+    res.status(200).json(checks);
+  } else {
+    res.status(503).json(checks); // 503 -> LB stops sending traffic
+  }
+});
+```
+
 The split matters. A `/livez` failure means "kill and restart me." A `/readyz` failure means "stop sending traffic but leave me alone — I might recover." Wiring the load balancer to liveness instead of readiness is a classic mistake: a backend that's briefly busy reloading config gets killed instead of merely drained. The inverse mistake is just as common — wiring the orchestrator's *restart* decision to a readiness check that fails whenever a downstream dependency hiccups, so a brief database blip triggers a restart storm across every pod at once.
 
 ### Consistent hashing and cache affinity
@@ -167,6 +192,78 @@ class ConsistentHashRing:
 
 ring = ConsistentHashRing(["cache-a", "cache-b", "cache-c"])
 print(ring.get("user:1042"))   # deterministic; stable when nodes change
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+import { createHash } from "node:crypto";
+
+class ConsistentHashRing {
+  private vnodes: number;
+  private ring = new Map<bigint, string>(); // hash position -> node
+  private sortedKeys: bigint[] = [];          // sorted positions for binary search
+
+  constructor(nodes: string[], vnodes = 150) {
+    this.vnodes = vnodes;
+    for (const n of nodes) this.add(n);
+  }
+
+  private hash(s: string): bigint {
+    return BigInt("0x" + createHash("md5").update(s).digest("hex"));
+  }
+
+  add(node: string): void {
+    for (let i = 0; i < this.vnodes; i++) {
+      const h = this.hash(`${node}#${i}`);
+      this.ring.set(h, node);
+      this.insort(h);
+    }
+  }
+
+  remove(node: string): void {
+    for (let i = 0; i < this.vnodes; i++) {
+      const h = this.hash(`${node}#${i}`);
+      this.ring.delete(h);
+      const idx = this.sortedKeys.indexOf(h);
+      if (idx !== -1) this.sortedKeys.splice(idx, 1);
+    }
+  }
+
+  get(key: string): string | null {
+    if (this.ring.size === 0) return null;
+    const h = this.hash(key);
+    const idx = this.bisect(h) % this.sortedKeys.length;
+    return this.ring.get(this.sortedKeys[idx])!;
+  }
+
+  // Insert keeping sortedKeys sorted (binary search insert).
+  private insort(value: bigint): void {
+    let lo = 0;
+    let hi = this.sortedKeys.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (this.sortedKeys[mid] < value) lo = mid + 1;
+      else hi = mid;
+    }
+    this.sortedKeys.splice(lo, 0, value);
+  }
+
+  // Index of the first element strictly greater than value (bisect_right).
+  private bisect(value: bigint): number {
+    let lo = 0;
+    let hi = this.sortedKeys.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (value < this.sortedKeys[mid]) hi = mid;
+      else lo = mid + 1;
+    }
+    return lo;
+  }
+}
+
+const ring = new ConsistentHashRing(["cache-a", "cache-b", "cache-c"]);
+console.log(ring.get("user:1042")); // deterministic; stable when nodes change
 ```
 
 The `vnodes=150` is the load-smoothing knob. Each physical node owns 150 small arcs scattered around the ring instead of one big arc, so adding or removing a node redistributes its share fairly across the survivors. (The exact count is a tradeoff: more virtual nodes smooth the distribution but cost memory and lookup time; production systems commonly use values in the low hundreds.) This is the same idea behind Amazon's Dynamo and the partitioning in Cassandra and modern CDNs. NGINX exposes it directly with `hash $request_uri consistent;` and Envoy with the `ring_hash` and `maglev` policies.

@@ -90,6 +90,57 @@ def compensate(saga):
     return saga
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// Saga state persisted in the orchestrator's own database.
+// Each step records its outcome so a crashed orchestrator can resume.
+
+enum Step {
+  FLIGHT = "flight",
+  HOTEL = "hotel",
+  CAR = "car",
+}
+
+const FORWARD: Step[] = [Step.FLIGHT, Step.HOTEL, Step.CAR];
+
+async function runBookingSaga(sagaId: string, req: BookingRequest): Promise<Saga> {
+  const saga = await loadOrCreate(sagaId, req); // durable row keyed by sagaId
+
+  // ---- forward path ----
+  for (const step of FORWARD.slice(saga.completedCount)) {
+    try {
+      const result = await invokeForward(step, saga); // idempotent call
+      saga.recordSuccess(step, result); // one local txn
+      await persist(saga);
+    } catch (e) {
+      if (e instanceof StepFailed) {
+        saga.markFailed(step, String(e));
+        await persist(saga);
+        return compensate(saga); // switch to backward path
+      }
+      throw e;
+    }
+  }
+
+  saga.markCompleted();
+  await persist(saga);
+  return saga;
+}
+
+async function compensate(saga: Saga): Promise<Saga> {
+  // walk completed steps in reverse, running each compensation
+  for (const step of [...saga.completedSteps()].reverse()) {
+    await invokeCompensation(step, saga); // MUST be idempotent + retried to success
+    saga.recordCompensated(step);
+    await persist(saga);
+  }
+  saga.markAborted();
+  await persist(saga);
+  return saga;
+}
+```
+
 Notice that the forward loop resumes from `saga.completed_count`: a crashed-and-restarted orchestrator reloads the durable row and picks up exactly where it left off, never replaying a step it already recorded. That resume-from-durable-state property is the whole reason the state lives in a database row rather than a local variable.
 
 The forward calls themselves go to each service. A reservation endpoint and its compensation, on the hotel service:
@@ -121,6 +172,42 @@ def cancel(id):
         return r
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+// Hotel service. Note the reservation carries the saga_id as an
+// idempotency key so retries don't double-book or double-charge.
+
+app.post("/reservations", async (req, res) => {
+  const key = req.headers["idempotency-key"] as string; // == saga_id + step
+  const existing = await reservations.findByKey(key);
+  if (existing) {
+    return res.json(existing); // safe to call again
+  }
+
+  await db.transaction(async (tx) => {
+    if (!(await inventory.hold(req.body.roomType, req.body.dates))) {
+      throw new StepFailed("no inventory");
+    }
+    const r = await reservations.create({ key, status: "RESERVED", ...req.body });
+    res.json(r);
+  });
+});
+
+// the compensation C2
+app.post("/reservations/:id/cancel", async (req, res) => {
+  await db.transaction(async (tx) => {
+    const r = await reservations.get(req.params.id);
+    if (r.status === "CANCELLED") {
+      return res.json(r); // idempotent: already done
+    }
+    await inventory.release(r.roomType, r.dates);
+    r.status = "CANCELLED";
+    res.json(r);
+  });
+});
+```
+
 Two details carry the weight here. First, the idempotency key is derived from `saga_id + step`, so a retried forward call lands on the same key and returns the existing reservation instead of holding inventory twice. Second, both endpoints do their work inside a single local `db.transaction()` — the hold and the row write commit together, so there is no window where inventory is held but no reservation exists, or vice versa. A forward step that is not atomic at its own service is a forward step you cannot reliably compensate.
 
 A forward call also needs a timeout. The reason 2PC failed for us was a slow dependency stalling the system; a saga only avoids that if each forward call gives up after a bounded wait and treats the timeout as a failure that triggers compensation. A forward step with no timeout reintroduces the exact blocking behavior the saga was supposed to escape.
@@ -145,6 +232,31 @@ def on_flight_reserved(evt):
 def on_car_failed(evt):
     release_room(evt.booking_id)   # idempotent
     publish("HotelReleased", booking_id=evt.booking_id)
+```
+
+*In TypeScript:*
+
+```typescript
+// Hotel service reacts to FlightReserved, then emits its own event.
+onEvent("FlightReserved", async (evt) => {
+  try {
+    const r = await reserveRoom(evt.bookingId, evt.dates); // idempotent on bookingId
+    await publish("HotelReserved", { bookingId: evt.bookingId, reservationId: r.id });
+  } catch (e) {
+    if (e instanceof NoInventory) {
+      await publish("HotelFailed", { bookingId: evt.bookingId });
+    } else {
+      throw e;
+    }
+  }
+});
+
+// Compensation is also event-driven: hotel listens for the failure
+// of any downstream step and releases its own hold.
+onEvent("CarFailed", async (evt) => {
+  await releaseRoom(evt.bookingId); // idempotent
+  await publish("HotelReleased", { bookingId: evt.bookingId });
+});
 ```
 
 The seductive part of choreography is that adding a participant looks like just subscribing to an event — no central code to edit. The hidden cost shows up at failure time: the compensation graph is the *transitive closure* of "who must react to whose failure," and every service has to know which downstream failures oblige it to unwind. With three participants that's manageable; with eight it becomes a web of event subscriptions that no single person can hold in their head, and there is no one place to put a breakpoint.

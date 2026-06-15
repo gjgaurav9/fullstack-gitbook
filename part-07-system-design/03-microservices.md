@@ -91,6 +91,30 @@ def complete_checkout(order):
     return confirm(order)                          # return immediately
 ```
 
+*In TypeScript:*
+
+```typescript
+// checkout handler: synchronous only for what the user must wait on
+async function completeCheckout(order: Order) {
+  const charge = await payments.authorizeCharge({   // sync: user waits on this
+    orderId: order.id,
+    amountCents: order.total,
+    currency: order.currency,
+    idempotencyKey: order.id,                        // natural key, safe to retry
+  });
+  if (charge.status !== "AUTHORIZED") {
+    return decline(charge);
+  }
+
+  // everything below happens after the response; emit an event, don't call
+  events.publish("order.authorized", {
+    order_id: order.id,
+    charge_id: charge.chargeId,
+  });
+  return confirm(order);                             // return immediately
+}
+```
+
 The `order.authorized` event is consumed by loyalty, email, and analytics on their own time. None of those services can take down checkout, and each can be deployed, scaled, and fail independently. This is the boundary between this chapter and the event-driven architecture chapter that follows — synchronous contracts for "the user is waiting," events for everything else.
 
 The synchronous calls you can't avoid need three guardrails, or one slow dependency will drag the whole request down with it. A **timeout** bounds how long you'll wait — set it below the caller's own deadline so you fail with budget left to respond, never relying on the default (often infinite) socket timeout. A **retry with backoff** handles the transient blip, but only for idempotent operations, and only with jittered exponential backoff and a hard cap, because naive immediate retries turn one struggling service into a self-inflicted thundering herd. A **circuit breaker** watches the recent error rate and, once it crosses a threshold, stops calling the dependency entirely for a cooldown window — failing fast and shedding load instead of piling thousands of doomed requests onto a service that's already on fire. Without the breaker, a single slow callee holds your worker threads hostage until your own service exhausts its pool and goes down too; that thread-pool exhaustion is exactly how a non-critical dependency takes a critical path with it.
@@ -123,6 +147,19 @@ tracer = trace.get_tracer("checkout")
 with tracer.start_as_current_span("complete_checkout") as span:
     span.set_attribute("order.id", order.id)
     charge = payments.authorize_charge(...)   # trace context auto-propagates
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+import { trace } from "@opentelemetry/api";
+const tracer = trace.getTracer("checkout");
+
+await tracer.startActiveSpan("complete_checkout", async (span) => {
+  span.setAttribute("order.id", order.id);
+  const charge = await payments.authorizeCharge(...); // trace context auto-propagates
+  span.end();
+});
 ```
 
 With this in place, the "intermittent checkout timeout" from the opening becomes a trace you can open and read: nine spans, and the one for `tax` lit up red with a tail-latency outlier the others don't have. Without it, that's a week of guessing. Tracing, structured logs with a correlation ID, and per-service RED metrics (Rate, Errors, Duration) are not optional add-ons for microservices; they're the cost of admission. Budget them before the first service ships, because retrofitting observability onto a running fleet is brutal.

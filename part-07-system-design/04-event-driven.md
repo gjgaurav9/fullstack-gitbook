@@ -61,6 +61,26 @@ def activate_subscription(user_id: str, plan: str):
     )
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+async function activateSubscription(userId: string, plan: string) {
+  await db.transaction(async (tx) => {           // (1)
+    await tx.execute(
+      "INSERT INTO subscriptions (user_id, plan, status) " +
+        "VALUES ($1, $2, 'active')",
+      [userId, plan],
+    );
+  });
+  // transaction has COMMITTED here
+
+  await producer.send({                           // (2)
+    topic: "subscription-events",
+    messages: [{ value: JSON.stringify({ userId, plan }) }],
+  });
+}
+```
+
 Two separate systems, two separate writes, no shared transaction. Postgres and Kafka cannot enlist in the same commit. Every interleaving that fails between (1) and (2) — process crash, network blip, broker unavailable, a `NameError` in a line you added later — leaves the database ahead of the stream. Reordering the two writes doesn't help: publish first and a DB failure leaves an event for a subscription that doesn't exist. There is no ordering of two independent writes that is safe under partial failure. That's the dual-write problem in one sentence.
 
 A tempting "fix" is to publish *after* commit with retries:
@@ -75,6 +95,24 @@ for attempt in range(3):                         # still broken
         break
     except KafkaError:
         time.sleep(2 ** attempt)
+```
+
+*In TypeScript:*
+
+```typescript
+await db.transaction(async (tx) => {
+  await tx.execute("INSERT INTO subscriptions ...");
+});
+
+for (let attempt = 0; attempt < 3; attempt++) {  // still broken
+  try {
+    await producer.send({ topic: "subscription-events", messages: [event] });
+    break;
+  } catch (err) {
+    if (!(err instanceof KafkaError)) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 2 ** attempt * 1000));
+  }
+}
 ```
 
 This narrows the window. It does not close it. If the process dies during the retry loop — or Kafka is down longer than your retries — the event is gone and nothing remembers it was owed. Retries reduce probability; they don't restore the atomicity you actually need.
@@ -125,6 +163,26 @@ def activate_subscription(user_id: str, plan: str):
     # both rows committed together, or neither did
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+async function activateSubscription(userId: string, plan: string) {
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      "INSERT INTO subscriptions (user_id, plan, status) " +
+        "VALUES ($1, $2, 'active')",
+      [userId, plan],
+    );
+    await tx.execute(
+      "INSERT INTO outbox (aggregate_id, event_type, payload) " +
+        "VALUES ($1, 'SubscriptionActivated', $2)",
+      [userId, JSON.stringify({ user_id: userId, plan })],
+    );
+  });
+  // both rows committed together, or neither did
+}
+```
+
 If the process dies anywhere — before commit, after commit, mid-publish — the invariant holds: an event exists in the outbox if and only if the subscription change is durable. Nothing is silently owed.
 
 A separate relay drains the outbox:
@@ -146,6 +204,33 @@ def relay_loop():
             )
         if not rows:
             time.sleep(0.5)
+```
+
+*In TypeScript:*
+
+```typescript
+async function relayLoop() {
+  while (true) {
+    const rows = await db.query(
+      "SELECT id, event_type, payload FROM outbox " +
+        "WHERE published_at IS NULL ORDER BY id LIMIT 100 " +
+        "FOR UPDATE SKIP LOCKED", // safe with multiple relays
+    );
+    for (const row of rows) {
+      await producer.send({
+        topic: "subscription-events",
+        messages: [{ key: row.aggregate_id, value: row.payload }],
+      });
+      await db.execute(
+        "UPDATE outbox SET published_at = now() WHERE id = $1",
+        [row.id],
+      );
+    }
+    if (rows.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
 ```
 
 Note what this gives you: **at-least-once delivery**. If the relay publishes a row and crashes before the `UPDATE`, it will publish that row again on restart. That's the correct tradeoff — you cannot get exactly-once across two systems (Chapter 8), so you choose at-least-once and make consumers idempotent. Keying by `aggregate_id` preserves per-aggregate ordering in Kafka. `FOR UPDATE SKIP LOCKED` lets you run several relay instances without double-publishing the same row.
