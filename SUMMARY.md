@@ -140,12 +140,12 @@
 ## Part 13 — Architecture & Design
 
 * [Overview](part-13-architecture/README.md)
-* SOLID, honestly
-* Design patterns that survived
-* Domain-driven design
-* Architecture Decision Records
-* API versioning and backward compatibility
-* C4 diagrams and architecture docs
+* [SOLID, honestly](part-13-architecture/01-solid.md)
+* [Design patterns that survived](part-13-architecture/02-design-patterns.md)
+* [Domain-driven design](part-13-architecture/03-ddd.md)
+* [Architecture Decision Records](part-13-architecture/04-adrs.md)
+* [API versioning and backward compatibility](part-13-architecture/05-api-versioning.md)
+* [C4 diagrams and architecture docs](part-13-architecture/06-c4-diagrams.md)
 
 ## Part 14 — Engineering Craft & Career
 
