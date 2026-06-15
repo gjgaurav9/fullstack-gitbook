@@ -104,6 +104,42 @@ func statusClass(code int) string {
 }
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { Histogram } from "prom-client";
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+const reqDuration = new Histogram({
+  name: "http_request_duration_seconds",
+  help: "Request latency by route and status class.",
+  // Buckets straddle the SLO threshold (0.3s) so we can query it precisely.
+  buckets: [0.05, 0.1, 0.2, 0.3, 0.5, 1, 2, 5],
+  labelNames: ["route", "status_class"],
+});
+
+type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+
+function instrument(route: string, next: Handler): Handler {
+  return (req, res) => {
+    const start = process.hrtime.bigint();
+    res.on("finish", () => {
+      const seconds = Number(process.hrtime.bigint() - start) / 1e9;
+      reqDuration
+        .labels(route, statusClass(res.statusCode))
+        .observe(seconds);
+    });
+    next(req, res);
+  };
+}
+
+function statusClass(code: number): string {
+  if (code >= 500) return "5xx";
+  if (code >= 400) return "4xx";
+  return "2xx3xx";
+}
+```
+
 Keep label cardinality low. `status_class` (three values), not raw status codes; `route` as a normalized template (`/orders/:id`), never the raw path with IDs baked in. High-cardinality labels are how you turn an SLI into a Prometheus outage. (See Part 9's chapter on metrics for the cardinality discussion in depth.)
 
 ### Computing the SLI and error budget in PromQL

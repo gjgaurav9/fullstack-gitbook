@@ -138,6 +138,24 @@ def get_price(sku: str) -> Decimal:
         return price
 ```
 
+The TypeScript equivalent:
+
+```typescript
+import { trace } from '@opentelemetry/api';
+
+const tracer = trace.getTracer('pricing', '1.0.0');
+
+function getPrice(sku: string): Decimal {
+  return tracer.startActiveSpan('get_price', (span) => {
+    span.setAttribute('sku', sku);
+    const price = priceRepo.lookup(sku); // auto-instrumented DB call nests here
+    span.setAttribute('price.cents', Math.round(price.times(100).toNumber()));
+    span.end();
+    return price;
+  });
+}
+```
+
 ### Following a propagated trace across services
 
 When `checkout` calls `inventory`, the HTTP instrumentation on the client injects `traceparent`; the server instrumentation on `inventory` extracts it. You can see the linkage by logging the active span context on each side. The resulting trace looks like this in the backend (here, the Jaeger waterfall view rendered as text):

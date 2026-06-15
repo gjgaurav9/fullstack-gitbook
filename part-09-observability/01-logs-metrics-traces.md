@@ -66,6 +66,17 @@ def process_order(order, user):
     logging.info("done")
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+function processOrder(order: Order, user: User): void {
+  console.info("processing order");
+  console.info("calling payment service");
+  charge(order.total);
+  console.info("done");
+}
+```
+
 Everything wrong with this is structural, not stylistic. The messages are free text, so you can't filter by `user_id` without a regex. There's no request identifier, so concurrent orders interleave into noise. There's no severity granularity that maps to anything. And `logging.info("error")` in an except block discards the exception. You cannot answer "show me all failed checkouts for user 4412 in the last hour" — the data to answer it was never recorded in a queryable shape.
 
 ### The right way: structured logging
@@ -92,6 +103,45 @@ def process_order(order, user, request_id, trace_id):
         log.error("payment.timeout", amount_cents=order.total, timeout_ms=e.timeout_ms)
         raise
     log.info("order.processing.done")
+```
+
+*In TypeScript:*
+
+```typescript
+import pino from "pino";
+
+const baseLog = pino();
+
+function processOrder(
+  order: Order,
+  user: User,
+  requestId: string,
+  traceId: string,
+): void {
+  const log = baseLog.child({
+    request_id: requestId,
+    trace_id: traceId,
+    user_id: user.id,
+    order_id: order.id,
+  });
+  log.info({ item_count: order.items.length }, "order.processing.start");
+  try {
+    const result = charge(order.total);
+    log.info(
+      { amount_cents: order.total, provider: result.provider },
+      "payment.charged",
+    );
+  } catch (e) {
+    if (e instanceof PaymentTimeout) {
+      log.error(
+        { amount_cents: order.total, timeout_ms: e.timeoutMs },
+        "payment.timeout",
+      );
+    }
+    throw e;
+  }
+  log.info("order.processing.done");
+}
 ```
 
 The output is now machine-parseable:
@@ -130,6 +180,31 @@ with checkout_latency.labels(status="ok", payment_provider="stripe").time():
 checkout_total.labels(status="ok").inc()
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+import { Counter, Histogram } from "prom-client";
+
+const checkoutLatency = new Histogram({
+  name: "checkout_latency_seconds",
+  help: "End-to-end checkout duration",
+  buckets: [0.05, 0.1, 0.2, 0.5, 1, 2, 5],
+  labelNames: ["status", "payment_provider"],
+});
+const checkoutTotal = new Counter({
+  name: "checkout_total",
+  help: "Checkouts attempted",
+  labelNames: ["status"],
+});
+
+const end = checkoutLatency
+  .labels({ status: "ok", payment_provider: "stripe" })
+  .startTimer();
+processOrder(/* ... */);
+end();
+checkoutTotal.labels({ status: "ok" }).inc();
+```
+
 The p99 alert that fired in the opening, in PromQL:
 
 ```promql
@@ -143,6 +218,13 @@ Now the trap. **Cardinality** is the number of distinct time series, which is th
 ```python
 # WRONG: unbounded label turns one metric into millions of series
 checkout_total.labels(status="ok", user_id=user.id, order_id=order.id).inc()
+```
+
+*In TypeScript:*
+
+```typescript
+// WRONG: unbounded label turns one metric into millions of series
+checkoutTotal.labels({ status: "ok", user_id: user.id, order_id: order.id }).inc();
 ```
 
 The rule: **metric labels must be low-cardinality and bounded** — enums, not identifiers. User IDs, order IDs, trace IDs, raw URLs with path params, email addresses: none of these belong in labels. They belong in logs and traces, where high cardinality is the entire point. If you need to connect a latency spike to specific requests, use **exemplars** — Prometheus and OpenTelemetry let a histogram bucket carry a sampled `trace_id`, so you click the spike on the graph and jump to a real trace, without paying the cardinality cost. Exemplars are the sanctioned bridge from the cheap aggregate world to the expensive per-request world; reach for them instead of smuggling an ID into a label.
@@ -167,6 +249,32 @@ def process_order(order, user):
             reserve(order.items)
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { trace } from "@opentelemetry/api";
+
+const tracer = trace.getTracer("checkout");
+
+function processOrder(order: Order, user: User): void {
+  tracer.startActiveSpan("checkout", (span) => {
+    span.setAttribute("user.id", user.id); // high-cardinality OK here
+    span.setAttribute("order.id", order.id);
+    const ctx = span.spanContext();
+    const traceId = ctx.traceId; // feed this to logs
+    tracer.startActiveSpan("payment.charge", (paymentSpan) => {
+      charge(order.total);
+      paymentSpan.end();
+    });
+    tracer.startActiveSpan("inventory.reserve", (inventorySpan) => {
+      reserve(order.items);
+      inventorySpan.end();
+    });
+    span.end();
+  });
+}
+```
+
 Span attributes are where high-cardinality data is welcome — `user.id`, `order.id`, full SQL, the works — because a trace is one request, not an aggregate. There is no series count to explode; each attribute is attached to a single span and stored once. The span tree shows you that of the 1.38s checkout, 1.20s was in `payment.charge`, and that `inventory.reserve` was fast and ran only after payment returned. That decomposition — which child ate the time, and in what order the children ran — is the "where did the time go" answer no metric or log can give you on its own.
 
 The catch: traces are usually **sampled** (a small fraction of requests) to control cost, so the one anomalous request may not be captured. Mitigate with **tail-based sampling** — decide after the trace completes, keeping all traces that errored or exceeded a latency threshold while sampling the boring fast ones. You pay to store the traces that teach you something and discard the ones that don't. That's covered in depth in the next chapter.
@@ -182,6 +290,23 @@ def handle_request(request):
     trace_id = format(span.get_span_context().trace_id, "032x")
     structlog.contextvars.bind_contextvars(request_id=request_id, trace_id=trace_id)
     # every log.info() below now carries both IDs, automatically
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+import { AsyncLocalStorage } from "node:async_hooks";
+import { trace } from "@opentelemetry/api";
+
+const logContext = new AsyncLocalStorage<Record<string, string>>();
+
+function handleRequest(request: Request): void {
+  const requestId = request.headers.get("x-request-id") ?? newId();
+  const span = trace.getActiveSpan();
+  const traceId = span?.spanContext().traceId ?? "";
+  logContext.enterWith({ request_id: requestId, trace_id: traceId });
+  // every log.info() below now carries both IDs, automatically
+}
 ```
 
 Now the full loop closes: the alert fires on the metric, its exemplar gives you a `trace_id`, the trace shows `payment.charge` ate 1.2s, and `{service="payment"} | json | trace_id="abc123"` pulls the exact log line — `payment.timeout, provider=stripe, timeout_ms=2000` — across every service the request touched. Three hours becomes three minutes.
