@@ -57,6 +57,15 @@ def get_user_orders(user_id):
     return [o for o in orders if o.status != 'cancelled']
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+async function getUserOrders(userId: number): Promise<Order[]> {
+  const orders = await db.query(`SELECT * FROM orders WHERE user_id = ${userId}`);
+  return orders.filter((o) => o.status !== "cancelled");
+}
+```
+
 A weak review produces comments like these:
 
 ```text

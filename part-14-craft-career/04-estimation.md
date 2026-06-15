@@ -83,6 +83,35 @@ print(f"Expected ~{total_e:.1f}d, ~68% range {low:.1f}–{high:.1f}d")
 # Expected ~8.1d, ~68% range 6.9–9.3d
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// Three-point estimation. E = expected days, sd = rough std dev.
+// O = everything goes right, M = normal, P = the bad-but-plausible case.
+const tasks: Record<string, [number, number, number]> = {
+  "stream query + endpoint":   [1, 2, 4],
+  "CSV serializer + columns":  [1, 2, 6],   // P high: legacy column match
+  "timezone / formatting":     [0.5, 1, 3],
+  "tests + review + fixes":    [1, 2, 4],
+};
+
+function pert(o: number, m: number, p: number): [number, number] {
+  const expected = (o + 4 * m + p) / 6;
+  const sd = (p - o) / 6;
+  return [expected, sd];
+}
+
+const values = Object.values(tasks);
+const totalE = values.reduce((sum, v) => sum + pert(...v)[0], 0);
+// Variances add; standard deviations do not. Combine in quadrature.
+const totalSd = Math.sqrt(values.reduce((sum, v) => sum + pert(...v)[1] ** 2, 0));
+
+const low = totalE - totalSd;   // ~1 sd band ≈ 68% interval
+const high = totalE + totalSd;
+console.log(`Expected ~${totalE.toFixed(1)}d, ~68% range ${low.toFixed(1)}–${high.toFixed(1)}d`);
+// Expected ~8.1d, ~68% range 6.9–9.3d
+```
+
 Two things this makes concrete. The expected total (`~8.1d`) is well above your gut "couple of days," because summing most-likely values and adding the asymmetric pessimistic tail captures the surprises your gut skips. And uncertainties combine in quadrature, not by simple addition — which is why a project of many small uncertain tasks has a tighter *relative* range than any single task, but a wider absolute one than you'd guess. Don't present the spreadsheet to the PM; present the range it produces.
 
 ### Reference classes beat decomposition
