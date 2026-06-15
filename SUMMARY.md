@@ -150,13 +150,13 @@
 ## Part 14 — Engineering Craft & Career
 
 * [Overview](part-14-craft-career/README.md)
-* Reading code at speed
-* Code review as a teaching act
-* Writing documentation, RFCs, and design docs
-* Estimation that doesn't lie
-* Tech debt as a budget
-* Mentoring and influence
-* Async work, remote-first habits, career ladders
+* [Reading code at speed](part-14-craft-career/01-reading-code.md)
+* [Code review as a teaching act](part-14-craft-career/02-code-review.md)
+* [Writing documentation, RFCs, and design docs](part-14-craft-career/03-docs-rfcs.md)
+* [Estimation that doesn't lie](part-14-craft-career/04-estimation.md)
+* [Tech debt as a budget](part-14-craft-career/05-tech-debt.md)
+* [Mentoring and influence](part-14-craft-career/06-mentoring.md)
+* [Async work, remote-first habits, career ladders](part-14-craft-career/07-async-remote-career.md)
 
 ## Part 15 — Capstone Projects
 
