@@ -74,6 +74,19 @@ def find_user(email):
 # -> returns every row
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// VULNERABLE: string interpolation into SQL
+function findUser(email: string) {
+  return db.query(`SELECT * FROM users WHERE email = '${email}'`);
+}
+
+// Attacker sends:  ' OR '1'='1
+// Resulting query: SELECT * FROM users WHERE email = '' OR '1'='1'
+// -> returns every row
+```
+
 The fix is parameterized queries. The driver sends the SQL template and the values separately, so the database never parses user data as SQL syntax:
 
 ```python
@@ -81,6 +94,15 @@ The fix is parameterized queries. The driver sends the SQL template and the valu
 def find_user(email):
     cur.execute("SELECT * FROM users WHERE email = ?", (email,))
     return cur.fetchall()
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// FIXED: the ? is a bound parameter, never parsed as SQL
+function findUser(email: string) {
+  return db.query("SELECT * FROM users WHERE email = ?", [email]);
+}
 ```
 
 Command injection is the same disease in a different organ. Building a shell string from input lets the attacker append their own commands.
@@ -95,12 +117,36 @@ def convert(filename):
 # Attacker sends:  photo.jpg; rm -rf /
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { exec } from "node:child_process";
+
+// VULNERABLE: filename flows into a shell
+function convert(filename: string) {
+  exec(`convert ${filename} out.png`);
+}
+
+// Attacker sends:  photo.jpg; rm -rf /
+```
+
 The fix is to pass an argument list with `shell=False` (the default), so there is no shell to interpret metacharacters:
 
 ```python
 # FIXED: argv list, no shell — ';' is just part of a filename now
 def convert(filename):
     subprocess.run(["convert", filename, "out.png"], shell=False)
+```
+
+*In TypeScript:*
+
+```typescript
+import { execFile } from "node:child_process";
+
+// FIXED: argv list, no shell — ';' is just part of a filename now
+function convert(filename: string) {
+  execFile("convert", [filename, "out.png"]);
+}
 ```
 
 Never build interpreter input by concatenation — for SQL, shell, LDAP, or NoSQL. Use the API that separates code from data. If you must interpolate (rare: dynamic table names), validate against a strict allow-list.
@@ -115,6 +161,17 @@ import hashlib
 # VULNERABLE: fast, unsalted hash — crackable at enormous rates on commodity GPUs
 def store_password(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
+```
+
+*The same idea in TypeScript:*
+
+```typescript
+import { createHash } from "node:crypto";
+
+// VULNERABLE: fast, unsalted hash — crackable at enormous rates on commodity GPUs
+function storePassword(pw: string): string {
+  return createHash("sha256").update(pw).digest("hex");
+}
 ```
 
 SHA-256 is designed to be fast, which is exactly wrong for passwords: it lets an attacker who steals the table brute-force it cheaply. Use a slow, salted, memory-hard password hash. Argon2id is the current recommendation from the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html); bcrypt remains acceptable.
@@ -133,6 +190,26 @@ def verify_password(stored: str, pw: str) -> bool:
         return ph.verify(stored, pw)
     except Exception:
         return False
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// FIXED: Argon2id — slow, salted, memory-hard, tunable work factor
+import argon2 from "argon2";
+
+function storePassword(pw: string): Promise<string> {
+  // encodes algorithm, params, and salt in the string; salt generated per-hash
+  return argon2.hash(pw, { type: argon2.argon2id });
+}
+
+async function verifyPassword(stored: string, pw: string): Promise<boolean> {
+  try {
+    return await argon2.verify(stored, pw);
+  } catch {
+    return false;
+  }
+}
 ```
 
 The same category covers transmitting secrets over plaintext HTTP, hardcoding keys in source, using ECB mode, or reaching for `Math.random()` to generate a token. For randomness that an attacker must not predict (session IDs, password-reset tokens), use a cryptographically secure source: `crypto.randomBytes` in Node, `secrets` in Python.
@@ -188,11 +265,27 @@ app.run(debug=True)            # Flask: interactive debugger + RCE via the conso
 DEBUG = True                   # Django: full settings + SQL in error pages
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// VULNERABLE: server.ts shipped to production
+app.set("env", "development"); // Express: leaks full stack traces in error responses
+const DEBUG = true;            // app code: verbose error pages
+```
+
 ```python
 # FIXED: driven by environment, defaulting to safe
 import os
 DEBUG = os.environ.get("APP_ENV") == "development"
 app.run(debug=DEBUG)
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// FIXED: driven by environment, defaulting to safe
+const DEBUG = process.env.APP_ENV === "development";
+app.set("env", DEBUG ? "development" : "production");
 ```
 
 Misconfiguration also covers permissive CORS (`Access-Control-Allow-Origin: *` on an authenticated API), default admin credentials left in place, S3 buckets set to public, and missing security headers. Set a baseline: `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, and scope CORS to the exact origins you serve.

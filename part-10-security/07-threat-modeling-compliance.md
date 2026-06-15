@@ -138,6 +138,34 @@ USER_SCHEMA = [
 ]
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+enum Sensitivity {
+  PUBLIC = "public",
+  INTERNAL = "internal",
+  PII = "pii",       // GDPR personal data: name, email, IP
+  PHI = "phi",       // HIPAA protected health info
+  SECRET = "secret", // credentials, keys
+}
+
+interface Field {
+  name: string;
+  sensitivity: Sensitivity;
+  // retention in days; null = retain per business rule, 0 = don't persist
+  retentionDays?: number | null;
+}
+
+// Retention windows below are illustrative — set them from your own
+// legal/compliance review, not from these placeholder values.
+const USER_SCHEMA: Field[] = [
+  { name: "id", sensitivity: Sensitivity.INTERNAL },
+  { name: "email", sensitivity: Sensitivity.PII, retentionDays: null },
+  { name: "diagnosis_code", sensitivity: Sensitivity.PHI, retentionDays: 2190 }, // placeholder window
+  { name: "session_token", sensitivity: Sensitivity.SECRET, retentionDays: 0 },
+];
+```
+
 Once classification is data rather than tribal knowledge, you can drive log redaction, encryption-at-rest decisions, retention jobs, and access reviews from one source of truth.
 
 **Audit logs.** SOC 2 (Trust Services Criteria, the Common Criteria around logging and monitoring) and HIPAA (the audit controls standard, 45 CFR 164.312(b)) both require a tamper-evident record of who did what to sensitive data. The engineering requirements that actually get tested: logs are append-only, they capture actor / action / resource / timestamp / outcome, they don't themselves leak the sensitive payload, and they're retained long enough.
@@ -153,6 +181,20 @@ def record(actor: str, action: str, resource: str, outcome: str = "success"):
     # Append-only sink (e.g., WORM bucket / managed log store), NOT the app DB
     # the app can also delete from. Never log the sensitive value itself.
     audit_sink.append(entry)
+```
+
+*In TypeScript:*
+
+```typescript
+function record(actor: string, action: string, resource: string, outcome = "success") {
+  const entry = {
+    actor, action, resource,
+    outcome, at: new Date().toISOString(),
+  };
+  // Append-only sink (e.g., WORM bucket / managed log store), NOT the app DB
+  // the app can also delete from. Never log the sensitive value itself.
+  auditSink.append(entry);
+}
 ```
 
 The classic mistake is writing audit events to the same database table the application can `UPDATE` and `DELETE`. If the audited system can rewrite its own audit trail, it isn't an audit trail. Ship audit events to a separate, append-only, restricted-access store.
@@ -173,6 +215,25 @@ def erase_subject(subject_id: str):
                  resource=f"subject:{subject_id}")
     # 4. Propagate to downstream processors (analytics, warehouse, search index)
     erasure_bus.publish(subject_id)
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+async function eraseSubject(subjectId: string) {
+  // 1. Hard-delete from primary stores where feasible
+  await db.deleteSubjectRows(subjectId);
+  // 2. Crypto-shred: destroy the per-subject data key in the KMS.
+  //    Backups/immutable logs now hold unrecoverable ciphertext.
+  await kms.scheduleKeyDeletion(`subject-data-key:${subjectId}`);
+  // 3. Record the erasure itself (the audit log keeps the EVENT, not the data)
+  await audit.record({
+    actor: "system", action: "gdpr.erasure",
+    resource: `subject:${subjectId}`,
+  });
+  // 4. Propagate to downstream processors (analytics, warehouse, search index)
+  await erasureBus.publish(subjectId);
+}
 ```
 
 Step 4 is the one teams forget. Personal data is rarely in one place. If you copy users into a data warehouse, a search index, and an analytics pipeline, an erasure request has to reach all of them, which is far easier if you built a deletion fan-out from the start than if you bolt it on under GDPR's roughly one-month response deadline.

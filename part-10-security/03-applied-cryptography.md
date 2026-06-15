@@ -58,6 +58,21 @@ def verify_password(password: str, stored: str) -> bool:
     return hashlib.sha256(password.encode()).hexdigest() == stored
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { createHash } from "node:crypto";
+
+// ANTI-PATTERN - do not ship this.
+function storePassword(password: string): string {
+  return createHash("sha256").update(password).digest("hex");
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  return createHash("sha256").update(password).digest("hex") === stored;
+}
+```
+
 Three independent failures:
 
 1. **No salt.** Identical passwords produce identical hashes, so a single rainbow table cracks every reused password at once, and you can see which users share a password.
@@ -149,6 +164,33 @@ def decrypt(blob: bytes, aad: bytes = b"") -> bytes:
     return aead.decrypt(nonce, ct, aad)  # raises if tampered or wrong key
 ```
 
+*In TypeScript:*
+
+```typescript
+import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
+
+const key = randomBytes(32); // 256-bit; store this in a KMS/Vault, not in code
+
+export function encrypt(plaintext: Buffer, aad: Buffer = Buffer.alloc(0)): Buffer {
+  const nonce = randomBytes(12); // 96-bit nonce, FRESH per message
+  const cipher = createCipheriv("aes-256-gcm", key, nonce);
+  cipher.setAAD(aad);
+  const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([nonce, ct, tag]); // prepend nonce so the decryptor has it
+}
+
+export function decrypt(blob: Buffer, aad: Buffer = Buffer.alloc(0)): Buffer {
+  const nonce = blob.subarray(0, 12);
+  const tag = blob.subarray(blob.length - 16);
+  const ct = blob.subarray(12, blob.length - 16);
+  const decipher = createDecipheriv("aes-256-gcm", key, nonce);
+  decipher.setAAD(aad);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]); // throws if tampered or wrong key
+}
+```
+
 Two non-negotiables hide in those few lines:
 
 - **The nonce is fresh every time.** `os.urandom(12)` per message. With a 96-bit random nonce you can safely encrypt a large but finite number of messages under one key before birthday-bound collision probability becomes a concern; rotate keys well before then. Never use a counter you might reset, never hard-code a nonce, never reuse one.
@@ -186,6 +228,20 @@ signature = private_key.sign(b"transfer 100 to alice")
 public_key.verify(signature, b"transfer 100 to alice")  # raises on mismatch
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+import { generateKeyPairSync, sign, verify } from "node:crypto";
+
+const { privateKey, publicKey } = generateKeyPairSync("ed25519"); // distribute publicKey freely
+
+const message = Buffer.from("transfer 100 to alice");
+const signature = sign(null, message, privateKey);
+
+// Anyone with the public key can verify; only the holder could have signed.
+const ok = verify(null, message, publicKey, signature); // false on mismatch
+```
+
 Ed25519 is fast, has small keys and signatures, and avoids the parameter-choice footguns of raw RSA. Prefer it for new signing work. Use RSA-OAEP or X25519-based key exchange when you need encryption to a public key; never use textbook RSA without padding.
 
 ### Comparing secrets in constant time
@@ -195,6 +251,15 @@ When you compare a MAC, token, or any secret, use a constant-time comparison so 
 ```python
 import hmac
 hmac.compare_digest(provided_token, expected_token)  # not ==
+```
+
+*In TypeScript:*
+
+```typescript
+import { timingSafeEqual } from "node:crypto";
+
+// Both buffers must be the same length; length-check first.
+timingSafeEqual(providedToken, expectedToken); // not ===
 ```
 
 The equivalent in Node is `crypto.timingSafeEqual(a, b)`, which requires both buffers to be the same length — so compare fixed-length digests, not raw user input, and length-check first.

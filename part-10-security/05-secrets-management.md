@@ -44,6 +44,15 @@ STRIPE_KEY = "sk_live_51HxQ2eK8..."
 AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// settings.ts  — DO NOT DO THIS
+export const DATABASE_URL = "postgres://app:S3cretP@ss@db.prod.internal:5432/main";
+export const STRIPE_KEY = "sk_live_51HxQ2eK8...";
+export const AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+```
+
 And the slightly-less-obvious version that engineers convince themselves is fine — a committed `.env`:
 
 ```bash
@@ -88,6 +97,30 @@ def get_secret(name: str) -> dict:
 
 # The app authenticates via its IAM role (no static AWS keys on the box).
 db_url = get_secret("prod/app/db")["url"]
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from "@aws-sdk/client-secrets-manager";
+
+const client = new SecretsManagerClient({});
+const cache = new Map<string, Record<string, string>>();
+
+async function getSecret(name: string): Promise<Record<string, string>> {
+  const cached = cache.get(name);
+  if (cached) return cached;
+  const resp = await client.send(new GetSecretValueCommand({ SecretId: name }));
+  const value = JSON.parse(resp.SecretString!);
+  cache.set(name, value);
+  return value;
+}
+
+// The app authenticates via its IAM role (no static AWS keys on the box).
+const dbUrl = (await getSecret("prod/app/db")).url;
 ```
 
 Note what's absent: no AWS key in the code. The instance, container, or Lambda assumes an IAM role via the instance metadata service; the SDK resolves credentials automatically. The only thing the application "knows" is which secret to ask for, not the secret itself. The store enforces access with IAM policy and writes every read to CloudTrail, so you get authorization and an audit log for free.
