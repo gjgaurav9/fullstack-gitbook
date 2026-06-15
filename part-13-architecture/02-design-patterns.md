@@ -211,6 +211,36 @@ bus.on("order.paid", notify_warehouse)
 bus.emit("order.paid", {"order_id": order.id, "total": order.total_cents})
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+type Handler = (payload: Record<string, unknown>) => void;
+
+class EventBus {
+  private subs = new Map<string, Handler[]>();
+
+  on(event: string, handler: Handler): void {
+    const handlers = this.subs.get(event) ?? [];
+    handlers.push(handler);
+    this.subs.set(event, handlers);
+  }
+
+  emit(event: string, payload: Record<string, unknown>): void {
+    for (const handler of this.subs.get(event) ?? []) {
+      handler(payload); // in production: dispatch to a queue, not inline
+    }
+  }
+}
+
+const bus = new EventBus();
+bus.on("order.paid", sendReceipt);
+bus.on("order.paid", updateInventory);
+bus.on("order.paid", notifyWarehouse);
+
+// The payment code knows nothing about its four downstream consumers.
+bus.emit("order.paid", { order_id: order.id, total: order.totalCents });
+```
+
 > **Connect the dots:** Observer scaled up across process boundaries *is* event-driven architecture — the publish/subscribe backbone of Kafka, SNS/SQS, and webhooks covered in Part 8. The in-process version here and the distributed version there are the same idea at different blast radii. The hard parts (ordering, retries, idempotency, what happens when a subscriber throws) are exactly the parts the toy in-memory bus hides, which is why production observers hand off to a real queue.
 
 ### Factory: usually just a function now
