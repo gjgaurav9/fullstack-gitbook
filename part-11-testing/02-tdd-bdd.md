@@ -155,12 +155,46 @@ def test_rejects_negative_rate():
         convert_total({"amount": 100, "currency": "USD"}, "EUR", -1)
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// billing.test.ts
+import { describe, it, expect } from 'vitest';
+import { convertTotal } from './billing';
+
+describe('convertTotal', () => {
+  it('converts a USD total to EUR', () => {
+    expect(convertTotal({ amount: 100, currency: 'USD' }, 'EUR', 0.92))
+      .toEqual({ amount: 92, currency: 'EUR' });
+  });
+
+  it('rejects a negative rate', () => {
+    expect(() => convertTotal({ amount: 100, currency: 'USD' }, 'EUR', -1))
+      .toThrow('rate must be non-negative');
+  });
+});
+```
+
 ```python
 # billing.py
 def convert_total(invoice, target, rate):
     if rate < 0:
         raise ValueError("rate must be non-negative")
     return {"amount": round(invoice["amount"] * rate, 2), "currency": target}
+```
+
+*In TypeScript:*
+
+```typescript
+// billing.ts
+type Money = { amount: number; currency: string };
+
+export function convertTotal(invoice: Money, target: string, rate: number): Money {
+  if (rate < 0) {
+    throw new Error('rate must be non-negative');
+  }
+  return { amount: Math.round(invoice.amount * rate * 100) / 100, currency: target };
+}
 ```
 
 For real money, neither `Math.round` nor Python's `round` is good enough — use `decimal.Decimal` in Python and a library like `dinero.js` in TypeScript. The point here is the loop, not the rounding strategy.

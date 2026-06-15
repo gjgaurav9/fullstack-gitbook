@@ -156,6 +156,45 @@ class CheckoutUser(HttpUser):
                 res.failure(f"too slow: {res.elapsed.total_seconds():.2f}s")
 ```
 
+*The same idea in TypeScript (a k6 script, paced by arrival rate to approximate the open model):*
+
+```typescript
+// checkout-throughput.ts
+import http from 'k6/http';
+import { check } from 'k6';
+import type { Options } from 'k6/options';
+
+export const options: Options = {
+  scenarios: {
+    checkout: {
+      executor: 'constant-arrival-rate', // pace by arrival, not by think-time
+      rate: 400, // 400 requests/s ≈ 400 users at 1 req/s each
+      timeUnit: '1s',
+      duration: '5m',
+      preAllocatedVUs: 400,
+      maxVUs: 1000,
+    },
+  },
+};
+
+export default function (): void {
+  const res = http.post(
+    'https://staging.example.com/api/checkout',
+    JSON.stringify({ cart: 'cart_123', promo: 'BLACKFRIDAY' }),
+    { headers: { 'Content-Type': 'application/json' } },
+  );
+  check(res, {
+    'not too slow': (r) => {
+      const tooSlow = r.timings.duration > 1000;
+      if (tooSlow) {
+        console.error(`too slow: ${(r.timings.duration / 1000).toFixed(2)}s`);
+      }
+      return !tooSlow;
+    },
+  });
+}
+```
+
 ```bash
 $ locust -f locustfile.py --host https://staging.example.com \
     --users 400 --spawn-rate 50 --run-time 5m --headless \

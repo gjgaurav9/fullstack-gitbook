@@ -129,6 +129,26 @@ def test_encode_decode_round_trips(value):
     assert decode(encode(value)) == value
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// codec.property.test.ts
+import { it, expect } from "vitest";
+import fc from "fast-check";
+import { encode, decode } from "./codec";
+
+it("encode/decode round trips", () => {
+  fc.assert(
+    fc.property(
+      fc.dictionary(fc.string(), fc.integer()),
+      (value) => {
+        expect(decode(encode(value))).toEqual(value);
+      },
+    ),
+  );
+});
+```
+
 Hypothesis will throw empty dicts, dicts with empty-string keys, huge integers, and surrogate-pair Unicode at this. It also has a `.hypothesis/` example database: once it finds a failing input, it saves it and replays it first on every future run, so a fixed bug stays fixed.
 
 ### Measuring whether your tests assert anything

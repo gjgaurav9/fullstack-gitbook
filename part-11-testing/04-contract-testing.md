@@ -278,6 +278,37 @@ schema_v2 = """
 client.register_schema("payments.charges-value", Schema(schema_v2, "AVRO"))
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// producer registers an Avro schema; the registry rejects incompatible changes
+const registryUrl = "http://schema-registry:8081";
+
+const schemaV2 = `
+{
+  "type": "record", "name": "ChargeCreated", "namespace": "payments",
+  "fields": [
+    {"name": "id", "type": "string"},
+    {"name": "amount_cents", "type": "long"},
+    {"name": "currency", "type": "string"},
+    {"name": "method", "type": ["null", "string"], "default": null}
+  ]
+}
+`;
+
+// With subject compatibility set to BACKWARD, the registry accepts this:
+// the new optional 'method' field has a default, so old consumers still read.
+const res = await fetch(
+  `${registryUrl}/subjects/payments.charges-value/versions`,
+  {
+    method: "POST",
+    headers: { "Content-Type": "application/vnd.schemaregistry.v1+json" },
+    body: JSON.stringify({ schema: schemaV2, schemaType: "AVRO" }),
+  },
+);
+if (!res.ok) throw new Error(await res.text());
+```
+
 If the producer instead tried to *remove* `amount_cents` or rename it, registration under `BACKWARD` compatibility fails:
 
 ```text

@@ -166,6 +166,40 @@ def test_redelivery_does_not_double_charge(db_url):
     assert charges == ["inv_9"]  # exactly one charge, verified against real Postgres
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// charge.integration.test.ts
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { PostgreSqlContainer, StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { handleWebhook } from "./charge";
+import { PostgresIdempotencyStore } from "./store";
+
+describe("redelivery against real Postgres", () => {
+  let pg: StartedPostgreSqlContainer;
+
+  beforeAll(async () => {
+    pg = await new PostgreSqlContainer("postgres:16").start();
+  });
+  afterAll(async () => {
+    await pg.stop();
+  });
+
+  it("does not double charge", async () => {
+    const store = new PostgresIdempotencyStore(pg.getConnectionUri());
+    await store.migrate();
+    const charges: string[] = [];
+    const fakePayment = { charge: async (inv: string) => { charges.push(inv); } };
+
+    const event = { event: "invoice.paid", invoiceId: "inv_9" };
+    await handleWebhook(event, { paymentClient: fakePayment, idempotencyStore: store });
+    await handleWebhook(event, { paymentClient: fakePayment, idempotencyStore: store });
+
+    expect(charges).toEqual(["inv_9"]); // exactly one charge, verified against real Postgres
+  });
+});
+```
+
 This runs in seconds, not milliseconds, and it exercises the real SQL — including the `UNIQUE` constraint and the transaction boundary that an in-memory fake can't model. If the idempotency guarantee actually lives in a database constraint rather than application code, only this test can prove it. This is the band the testing trophy wants you to invest in, and for stateful glue code it's the best dollar-for-confidence ratio you'll find.
 
 ### An end-to-end test at the top
