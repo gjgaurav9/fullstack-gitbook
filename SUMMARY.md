@@ -85,14 +85,14 @@
 ## Part 8 — DevOps, Infrastructure & Cloud
 
 * [Overview](part-08-devops-cloud/README.md)
-* Linux for application engineers
-* Docker beyond `docker run`
-* Kubernetes for engineers who must use it
-* CI/CD pipelines that don't rot
-* Infrastructure as code with Terraform
-* AWS, the working subset
-* Serverless without surprises
-* FinOps
+* [Linux for application engineers](part-08-devops-cloud/01-linux.md)
+* [Docker beyond `docker run`](part-08-devops-cloud/02-docker.md)
+* [Kubernetes for engineers who must use it](part-08-devops-cloud/03-kubernetes.md)
+* [CI/CD pipelines that don't rot](part-08-devops-cloud/04-cicd.md)
+* [Infrastructure as code with Terraform](part-08-devops-cloud/05-terraform.md)
+* [AWS, the working subset](part-08-devops-cloud/06-aws.md)
+* [Serverless without surprises](part-08-devops-cloud/07-serverless.md)
+* [FinOps](part-08-devops-cloud/08-finops.md)
 
 ## Part 9 — Observability & Reliability
 
