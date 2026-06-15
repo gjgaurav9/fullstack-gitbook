@@ -8,9 +8,9 @@ The earlier parts cover the pieces. The capstones force you to integrate them. E
 
 ## Chapters in this Part
 
-1. **Real-time collaborative editor** — CRDTs, presence, conflict resolution, WebSockets at scale, and the operational realities of always-connected clients.
-2. **Multi-tenant SaaS with billing** — Tenant isolation, Stripe integration, subscription lifecycle, usage metering, and the gotchas of multi-tenant data.
-3. **AI semantic search engine** — Embeddings, vector store, reranking, and an evaluation harness that catches regressions.
-4. **Distributed URL shortener** — Sharding, caching, click analytics, rate limiting: the classic interview problem, built for real.
-5. **Event-sourced ledger** — Append-only events, projections, replay, point-in-time reconstruction, and the audit story it gives you for free.
-6. **Self-hosted PaaS on Kubernetes** — Multi-tenant compute, secrets, build pipelines, dashboards: a Heroku-shaped thing on top of k8s.
+1. **[Real-time collaborative editor](01-realtime-collaborative-editor.md)** — CRDTs, presence, conflict resolution, WebSockets at scale, and the operational realities of always-connected clients.
+2. **[Multi-tenant SaaS with billing](02-multi-tenant-saas-billing.md)** — Tenant isolation, Stripe integration, subscription lifecycle, usage metering, and the gotchas of multi-tenant data.
+3. **[AI semantic search engine](03-ai-semantic-search.md)** — Embeddings, vector store, reranking, and an evaluation harness that catches regressions.
+4. **[Distributed URL shortener](04-distributed-url-shortener.md)** — Sharding, caching, click analytics, rate limiting: the classic interview problem, built for real.
+5. **[Event-sourced ledger](05-event-sourced-ledger.md)** — Append-only events, projections, replay, point-in-time reconstruction, and the audit story it gives you for free.
+6. **[Self-hosted PaaS on Kubernetes](06-self-hosted-paas.md)** — Multi-tenant compute, secrets, build pipelines, dashboards: a Heroku-shaped thing on top of k8s.

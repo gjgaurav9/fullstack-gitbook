@@ -161,9 +161,9 @@
 ## Part 15 — Capstone Projects
 
 * [Overview](part-15-capstones/README.md)
-* Real-time collaborative editor
-* Multi-tenant SaaS with billing
-* AI semantic search engine
-* Distributed URL shortener
-* Event-sourced ledger
-* Self-hosted PaaS on Kubernetes
+* [Real-time collaborative editor](part-15-capstones/01-realtime-collaborative-editor.md)
+* [Multi-tenant SaaS with billing](part-15-capstones/02-multi-tenant-saas-billing.md)
+* [AI semantic search engine](part-15-capstones/03-ai-semantic-search.md)
+* [Distributed URL shortener](part-15-capstones/04-distributed-url-shortener.md)
+* [Event-sourced ledger](part-15-capstones/05-event-sourced-ledger.md)
+* [Self-hosted PaaS on Kubernetes](part-15-capstones/06-self-hosted-paas.md)
