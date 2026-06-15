@@ -37,14 +37,14 @@
 ## Part 4 — Frontend Engineering
 
 * [Overview](part-04-frontend/README.md)
-* The modern web platform
-* React deeply
-* Next.js as a production framework
-* State management without the rituals
-* Styling at scale
-* Performance and Core Web Vitals
-* Accessibility as a baseline
-* Browser APIs, build tooling, and PWAs
+* [The modern web platform](part-04-frontend/01-web-platform.md)
+* [React deeply](part-04-frontend/02-react-deeply.md)
+* [Next.js as a production framework](part-04-frontend/03-nextjs.md)
+* [State management without the rituals](part-04-frontend/04-state-management.md)
+* [Styling at scale](part-04-frontend/05-styling.md)
+* [Performance and Core Web Vitals](part-04-frontend/06-performance-cwv.md)
+* [Accessibility as a baseline](part-04-frontend/07-accessibility.md)
+* [Browser APIs, build tooling, and PWAs](part-04-frontend/08-browser-apis-pwa.md)
 
 ## Part 5 — Backend Engineering
 
