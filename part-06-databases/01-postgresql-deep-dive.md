@@ -191,6 +191,43 @@ def transfer(conn, src, dst, cents, retries=5):
             continue  # retry with fresh snapshot
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { PoolClient } from "pg";
+
+async function transfer(
+  client: PoolClient,
+  src: number,
+  dst: number,
+  cents: number,
+  retries = 5,
+): Promise<void> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      await client.query("BEGIN");
+      await client.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
+      await client.query(
+        "UPDATE accounts SET balance = balance - $1 WHERE id = $2",
+        [cents, src],
+      );
+      await client.query(
+        "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
+        [cents, dst],
+      );
+      await client.query("COMMIT");
+      return;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      // 40001 = serialization_failure
+      if ((err as { code?: string }).code !== "40001") throw err;
+      if (attempt === retries - 1) throw err;
+      // retry with fresh snapshot
+    }
+  }
+}
+```
+
 ### VACUUM, bloat, and wraparound
 
 Check bloat and autovacuum health before it bites:

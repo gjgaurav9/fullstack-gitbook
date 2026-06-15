@@ -105,6 +105,58 @@ def transfer(conn, src, dst, amount, retries=5):
             continue  # retry the whole transaction
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { Pool, DatabaseError } from "pg";
+
+async function transfer(
+  pool: Pool,
+  src: number,
+  dst: number,
+  amount: number,
+  retries = 5,
+): Promise<void> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
+      const res = await client.query(
+        "SELECT balance FROM accounts WHERE id=$1",
+        [src],
+      );
+      const bal = res.rows[0].balance;
+      if (bal < amount) {
+        throw new Error("insufficient funds");
+      }
+      await client.query("UPDATE accounts SET balance=balance-$1 WHERE id=$2", [
+        amount,
+        src,
+      ]);
+      await client.query("UPDATE accounts SET balance=balance+$1 WHERE id=$2", [
+        amount,
+        dst,
+      ]);
+      await client.query("COMMIT");
+      return; // committed
+    } catch (err) {
+      await client.query("ROLLBACK");
+      // 40001 = serialization_failure
+      if (err instanceof DatabaseError && err.code === "40001") {
+        if (attempt === retries - 1) {
+          throw err;
+        }
+        continue; // retry the whole transaction
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+}
+```
+
 The mental shift: at `SERIALIZABLE`, *every* transaction body must be safe to retry, because the engine may abort it through no fault of your logic. That retry loop is the price of not having to reason about every possible interleaving yourself.
 
 ### Write skew: the anomaly only SERIALIZABLE catches
