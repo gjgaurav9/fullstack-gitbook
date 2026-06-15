@@ -65,6 +65,27 @@ for n in range(100):
     lst.append(0)
 ```
 
+*In TypeScript:*
+
+```typescript
+import v8 from "node:v8";
+
+// V8 doesn't expose an array's backing capacity the way CPython's
+// sys.getsizeof reveals a list's over-allocation. v8.serialize gives us a
+// stable per-call byte size of the live array's contents so we can still
+// watch the size change as we push.
+const lst: number[] = [];
+let prev = -1;
+for (let n = 0; n < 100; n++) {
+  const size = v8.serialize(lst).length;
+  if (size !== prev) {
+    console.log(`len=${String(n).padStart(3)}  bytes=${size}`);
+    prev = size;
+  }
+  lst.push(0);
+}
+```
+
 The byte count jumps in chunks, not on every append — each jump is a reallocation to a larger backing array. The jumps get further apart as the list grows, which is the doubling-style growth that keeps amortized append at O(1). Between jumps, appends are pure O(1) writes into spare capacity.
 
 ### Hash maps: O(1) average, and what breaks it
@@ -117,6 +138,40 @@ func main() {
 }
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+const N = 8192;
+
+// A row of Int32Array is contiguous; the array-of-rows mirrors Go's [][]int.
+const m: Int32Array[] = [];
+for (let i = 0; i < N; i++) {
+  m[i] = new Int32Array(N);
+}
+
+// Row-major: inner loop walks contiguous memory.
+let start = process.hrtime.bigint();
+let sum = 0;
+for (let i = 0; i < N; i++) {
+  for (let j = 0; j < N; j++) {
+    sum += m[i][j];
+  }
+}
+let elapsed = Number(process.hrtime.bigint() - start) / 1e6;
+console.log(`row-major:    ${elapsed}ms (sum=${sum})`);
+
+// Column-major: inner loop jumps N ints between each access.
+start = process.hrtime.bigint();
+sum = 0;
+for (let j = 0; j < N; j++) {
+  for (let i = 0; i < N; i++) {
+    sum += m[i][j];
+  }
+}
+elapsed = Number(process.hrtime.bigint() - start) / 1e6;
+console.log(`column-major: ${elapsed}ms (sum=${sum})`);
+```
+
 Both loops perform exactly N² additions. The only difference is the order of access. The row-major version reads memory sequentially: when the CPU loads `m[i][0]`, it pulls a whole cache line (typically 64 bytes, eight int64s) into L1, and the next seven accesses are free. The column-major version jumps N elements between each read, so almost every access misses the cache and stalls waiting on main memory.
 
 On a typical machine the row-major version runs several times faster. Big O cannot see this difference; both are O(n²). The constant factor, driven entirely by the memory hierarchy, is the whole story. This is why "we'll just optimize the Big O" is sometimes the wrong move: when both candidates are O(n), the cache-friendly one wins, and that's something you measure, not derive.
@@ -134,6 +189,22 @@ func BenchmarkRowMajor(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		sumRowMajor(m)
 	}
+}
+```
+
+*The same idea in TypeScript:*
+
+```typescript
+import { performance } from "node:perf_hooks";
+
+function benchmarkRowMajor(iterations: number): void {
+  const m = makeMatrix(N);
+  const start = performance.now(); // analogous to b.ResetTimer()
+  for (let n = 0; n < iterations; n++) {
+    sumRowMajor(m);
+  }
+  const nsPerOp = ((performance.now() - start) * 1e6) / iterations;
+  console.log(`rowMajor: ${nsPerOp.toFixed(0)} ns/op`);
 }
 ```
 

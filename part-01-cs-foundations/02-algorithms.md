@@ -64,6 +64,30 @@ for o in orders:
     print(o.customer, o.priority, o.created_at)
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+interface Order {
+  customer: string;
+  priority: number; // 1 = highest
+  createdAt: number;
+}
+
+const orders: Order[] = [
+  { customer: "acme", priority: 2, createdAt: 1718300000.0 },
+  { customer: "globex", priority: 1, createdAt: 1718300500.0 },
+  { customer: "acme", priority: 1, createdAt: 1718300100.0 },
+  { customer: "globex", priority: 2, createdAt: 1718299000.0 },
+];
+
+// Sort by priority ascending, then oldest-first within a priority.
+orders.sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt);
+
+for (const o of orders) {
+  console.log(o.customer, o.priority, o.createdAt);
+}
+```
+
 ```text
 acme 1 1718300100.0
 globex 1 1718300500.0
@@ -77,6 +101,21 @@ A tuple key sorts lexicographically, so `(1, 1718300100.0)` comes before `(1, 17
 orders.sort(key=lambda o: (o.priority, o.created_at))
 result = [(o.customer, o.priority) for o in orders]
 assert result == [("acme", 1), ("globex", 1), ("globex", 2), ("acme", 2)]
+```
+
+*In TypeScript:*
+
+```typescript
+import assert from "node:assert/strict";
+
+orders.sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt);
+const result = orders.map((o) => [o.customer, o.priority]);
+assert.deepEqual(result, [
+  ["acme", 1],
+  ["globex", 1],
+  ["globex", 2],
+  ["acme", 2],
+]);
 ```
 
 The rule: build the key as a tuple in the exact priority order you want, and remember that tuples compare left-to-right, ascending. To reverse one field while keeping another ascending, negate a numeric field (`key=lambda o: (o.priority, -o.created_at)`) rather than passing `reverse=True`, which flips everything.
@@ -107,6 +146,40 @@ assert tier_for(2000) == "scale"
 assert tier_for(50000) == "enterprise"
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+import assert from "node:assert/strict";
+
+// Tier boundaries: spend >= boundaries[i] qualifies for tier i.
+const boundaries = [0, 100, 500, 2000, 10000];
+const names = ["free", "starter", "growth", "scale", "enterprise"];
+
+// Rightmost index whose boundary is <= spend (equivalent to bisect_right - 1).
+function bisectRight(a: number[], x: number): number {
+  let lo = 0;
+  let hi = a.length;
+  while (lo < hi) {
+    const mid = lo + ((hi - lo) >> 1);
+    if (x < a[mid]) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+function tierFor(spend: number): string {
+  const i = bisectRight(boundaries, spend) - 1;
+  return names[i];
+}
+
+assert.equal(tierFor(0), "free");
+assert.equal(tierFor(99), "free");
+assert.equal(tierFor(100), "starter"); // exact boundary -> next tier up
+assert.equal(tierFor(1999), "growth");
+assert.equal(tierFor(2000), "scale");
+assert.equal(tierFor(50000), "enterprise");
+```
+
 That `bisect_right(...) - 1` is the whole correct implementation of the broken endpoint from the opening. No `lo`, no `hi`, no `mid`, no place to put the off-by-one.
 
 You should still understand the manual version, because in interviews and in the occasional case where `bisect` doesn't fit (searching a rotated array, a 2D matrix, or an implicit predicate) you need to write it. Here it is with the invariants stated, which is how you avoid the traps:
@@ -127,6 +200,33 @@ a = [1, 3, 3, 3, 5, 7]
 assert lower_bound(a, 3) == 1    # leftmost 3
 assert lower_bound(a, 4) == 4    # insertion point between 3 and 5
 assert lower_bound(a, 8) == 6    # past the end
+```
+
+*In TypeScript:*
+
+```typescript
+import assert from "node:assert/strict";
+
+/** Leftmost index i where a[i] >= target. Returns a.length if none. */
+function lowerBound(a: number[], target: number): number {
+  let lo = 0;
+  let hi = a.length; // half-open: [lo, hi), hi is a.length not length-1
+  while (lo < hi) {
+    // strict <, because hi is exclusive
+    const mid = lo + ((hi - lo) >> 1); // avoids overflow; safe habit
+    if (a[mid] < target) {
+      lo = mid + 1; // mid known too small -> exclude it
+    } else {
+      hi = mid; // mid might be the answer -> keep it in range
+    }
+  }
+  return lo;
+}
+
+const a = [1, 3, 3, 3, 5, 7];
+assert.equal(lowerBound(a, 3), 1); // leftmost 3
+assert.equal(lowerBound(a, 4), 4); // insertion point between 3 and 5
+assert.equal(lowerBound(a, 8), 6); // past the end
 ```
 
 Three trap-avoidance rules, learned the expensive way:
@@ -172,6 +272,50 @@ assert shortest_hops(deps, "web", "web") == 0
 assert shortest_hops(deps, "cache", "db") is None
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import assert from "node:assert/strict";
+
+/** Fewest edges from start to goal, or null if unreachable. */
+function shortestHops(
+  graph: Record<string, string[]>,
+  start: string,
+  goal: string,
+): number | null {
+  if (start === goal) {
+    return 0;
+  }
+  const seen = new Set([start]);
+  const queue: Array<[string, number]> = [[start, 0]];
+  let head = 0;
+  while (head < queue.length) {
+    const [node, dist] = queue[head++];
+    for (const nbr of graph[node] ?? []) {
+      if (!seen.has(nbr)) {
+        if (nbr === goal) {
+          return dist + 1;
+        }
+        seen.add(nbr);
+        queue.push([nbr, dist + 1]);
+      }
+    }
+  }
+  return null;
+}
+
+const deps: Record<string, string[]> = {
+  web: ["api", "auth"],
+  api: ["db", "cache"],
+  auth: ["db"],
+  cache: [],
+  db: [],
+};
+assert.equal(shortestHops(deps, "web", "db"), 2);
+assert.equal(shortestHops(deps, "web", "web"), 0);
+assert.equal(shortestHops(deps, "cache", "db"), null);
+```
+
 The critical detail: mark a node as `seen` when you *enqueue* it, not when you dequeue it. Marking on dequeue lets the same node enter the queue multiple times before it's processed, which in a dense graph blows up memory and can double-count.
 
 DFS goes deep before wide. It's the tool for cycle detection and topological ordering — exactly the "can these services start in a valid order" question. Recursion is the natural expression, but on deep graphs Python's default recursion limit (around 1000 frames) will bite, so know the iterative form too.
@@ -207,6 +351,56 @@ def is_valid_topo(graph: dict[str, list[str]], order: list[str]) -> bool:
 
 # The order is valid but not unique, so assert the invariant, not one fixed list.
 assert is_valid_topo(deps, topo_sort(deps))
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+import assert from "node:assert/strict";
+
+const WHITE = 0,
+  GRAY = 1,
+  BLACK = 2; // unseen, on-stack, done
+
+/** Return nodes so every node comes before its dependents. Throws on a cycle. */
+function topoSort(graph: Record<string, string[]>): string[] {
+  const color: Record<string, number> = {};
+  for (const n of Object.keys(graph)) color[n] = WHITE;
+  const order: string[] = [];
+
+  function visit(n: string): void {
+    color[n] = GRAY;
+    for (const nbr of graph[n] ?? []) {
+      if ((color[nbr] ?? WHITE) === GRAY) {
+        throw new Error(`cycle through ${nbr}`);
+      }
+      if ((color[nbr] ?? WHITE) === WHITE) {
+        visit(nbr);
+      }
+    }
+    color[n] = BLACK;
+    order.push(n);
+  }
+
+  for (const n of Object.keys(graph)) {
+    if (color[n] === WHITE) {
+      visit(n);
+    }
+  }
+  return order.reverse(); // reverse post-order = topological order
+}
+
+/** Every edge u -> v must have u appear before v in the order. */
+function isValidTopo(graph: Record<string, string[]>, order: string[]): boolean {
+  const pos: Record<string, number> = {};
+  order.forEach((n, i) => (pos[n] = i));
+  return Object.entries(graph).every(([u, nbrs]) =>
+    nbrs.every((v) => pos[u] < pos[v]),
+  );
+}
+
+// The order is valid but not unique, so assert the invariant, not one fixed list.
+assert.ok(isValidTopo(deps, topoSort(deps)));
 ```
 
 The three-color scheme is what makes cycle detection correct: a back-edge to a GRAY (on the current recursion stack) node is a cycle; an edge to a BLACK (already fully processed) node is fine. A two-state "visited/not" set cannot tell those apart, which is the most common topological-sort bug.
@@ -251,6 +445,40 @@ assert edit_distance("", "abc") == 3
 assert edit_distance("same", "same") == 0
 ```
 
+*In TypeScript:*
+
+```typescript
+import assert from "node:assert/strict";
+
+/** Minimum single-character insertions, deletions, or substitutions
+ * to turn a into b. */
+function editDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  // dp[i][j] = distance between a[:i] and b[:j]
+  let prev = Array.from({ length: n + 1 }, (_, j) => j); // "" -> b[:j] costs j inserts
+  for (let i = 1; i <= m; i++) {
+    const curr = new Array(n + 1).fill(0);
+    curr[0] = i; // a[:i] -> "" costs i deletes
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1, // delete a[i-1]
+        curr[j - 1] + 1, // insert b[j-1]
+        prev[j - 1] + cost, // match or substitute
+      );
+    }
+    prev = curr; // only the previous row is needed -> O(n) space
+  }
+  return prev[n];
+}
+
+assert.equal(editDistance("kitten", "sitting"), 3);
+assert.equal(editDistance("flaw", "lawn"), 2);
+assert.equal(editDistance("", "abc"), 3);
+assert.equal(editDistance("same", "same"), 0);
+```
+
 The two moves that turn DP from intimidating to mechanical: first, write the recurrence (distance of prefixes depends on three smaller prefix distances), then notice each subproblem `(i, j)` is asked for many times — that's the "overlapping subproblems" signal that DP applies. Second, observe the dependency pattern: row `i` needs only row `i-1`, so you keep two rows instead of the full m × n table, dropping space from O(mn) to O(n). That space optimization is the difference between an algorithm that fits in cache and one that thrashes on long strings.
 
 ### Greedy vs DP: when the cheap thing is correct
@@ -283,6 +511,43 @@ assert dp_coins(63, [1, 5, 10, 25]) == 6
 # Non-canonical system breaks greedy.
 assert greedy_coins(6, [1, 3, 4]) == 3   # 4+1+1, WRONG
 assert dp_coins(6, [1, 3, 4]) == 2       # 3+3, optimal
+```
+
+*The same idea in TypeScript:*
+
+```typescript
+import assert from "node:assert/strict";
+
+/** Fewest coins via greedy largest-first. CORRECT ONLY for canonical systems. */
+function greedyCoins(amount: number, coins: number[]): number {
+  let count = 0;
+  for (const c of [...coins].sort((a, b) => b - a)) {
+    count += Math.floor(amount / c);
+    amount %= c;
+  }
+  return amount === 0 ? count : -1;
+}
+
+/** Fewest coins, always correct. O(amount * coins.length). */
+function dpCoins(amount: number, coins: number[]): number {
+  const best = [0, ...new Array(amount).fill(Infinity)];
+  for (let a = 1; a <= amount; a++) {
+    for (const c of coins) {
+      if (c <= a && best[a - c] + 1 < best[a]) {
+        best[a] = best[a - c] + 1;
+      }
+    }
+  }
+  return best[amount] !== Infinity ? best[amount] : -1;
+}
+
+// US/euro coins are "canonical": greedy is provably optimal.
+assert.equal(greedyCoins(63, [1, 5, 10, 25]), 6); // 25+25+10+1+1+1
+assert.equal(dpCoins(63, [1, 5, 10, 25]), 6);
+
+// Non-canonical system breaks greedy.
+assert.equal(greedyCoins(6, [1, 3, 4]), 3); // 4+1+1, WRONG
+assert.equal(dpCoins(6, [1, 3, 4]), 2); // 3+3, optimal
 ```
 
 Greedy gives 4+1+1 (three coins) for 6 with denominations {1,3,4}; the optimum is 3+3 (two coins). Greedy can't see it because committing to the 4 forecloses the better path. The lesson generalizes: reach for greedy only when you can *prove* the exchange argument (swapping any optimal solution toward the greedy choice never makes it worse). When you can't prove it, use DP and pay the polynomial cost for a guaranteed-correct answer. Interval scheduling (earliest-finish-first) and Huffman coding are greedy-provable; coin change in general and knapsack are not.

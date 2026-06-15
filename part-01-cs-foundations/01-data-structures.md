@@ -58,6 +58,26 @@ for i in range(33):
         prev = cap
 ```
 
+*In TypeScript:*
+
+```typescript
+// V8 arrays also overallocate, but unlike CPython's sys.getsizeof there is no
+// public, portable way to read an array's backing capacity from JS. The growth
+// behavior is real; only the introspection is missing. This mirrors the loop's
+// logic, printing each length where capacity *would* be observed to change.
+const xs: number[] = [];
+const prevLen = -1;
+for (let i = 0; i < 33; i++) {
+  xs.push(i);
+  // No equivalent of sys.getsizeof for array capacity in JS; capacity stays an
+  // engine-internal detail. We can still observe the length progression that
+  // the Python code keys off of.
+  if (xs.length !== prevLen) {
+    console.log(`len=${String(xs.length).padStart(2)}  capacity~(engine-internal)`);
+  }
+}
+```
+
 ```
 len= 1  capacity~4
 len= 5  capacity~8
@@ -75,6 +95,40 @@ q = deque()
 q.append(1)       # O(1) at right
 q.appendleft(0)   # O(1) at left
 q.popleft()       # O(1) — a list's pop(0) is O(n)
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// JS has no built-in deque; a small doubly-linked structure gives O(1) at both ends.
+interface Node<T> { value: T; prev?: Node<T>; next?: Node<T>; }
+
+class Deque<T> {
+  private head?: Node<T>;
+  private tail?: Node<T>;
+  append(x: T): void {            // O(1) at right
+    const node: Node<T> = { value: x, prev: this.tail, next: undefined };
+    if (this.tail) this.tail.next = node; else this.head = node;
+    this.tail = node;
+  }
+  appendleft(x: T): void {        // O(1) at left
+    const node: Node<T> = { value: x, prev: undefined, next: this.head };
+    if (this.head) this.head.prev = node; else this.tail = node;
+    this.head = node;
+  }
+  popleft(): T | undefined {      // O(1) — Array.prototype.shift() is O(n)
+    if (!this.head) return undefined;
+    const v = this.head.value;
+    this.head = this.head.next;
+    if (this.head) this.head.prev = undefined; else this.tail = undefined;
+    return v;
+  }
+}
+
+const q = new Deque<number>();
+q.append(1);       // O(1) at right
+q.appendleft(0);   // O(1) at left
+q.popleft();       // O(1) — Array.prototype.shift() is O(n)
 ```
 
 ### Hash maps: collisions, load factor, and resizing
@@ -107,6 +161,33 @@ data = [i % 4000 for i in range(80_000)]
 
 t = time.perf_counter(); count_unique_slow(data); print(f"list: {time.perf_counter()-t:.3f}s")
 t = time.perf_counter(); count_unique_fast(data); print(f"set:  {time.perf_counter()-t:.4f}s")
+```
+
+*The same idea in TypeScript:*
+
+```typescript
+function countUniqueSlow(ids: number[]): number {
+  const seen: number[] = [];        // WRONG: Array.includes is O(n)
+  for (const cid of ids) {
+    if (!seen.includes(cid)) {      // O(n) scan, every iteration
+      seen.push(cid);
+    }
+  }
+  return seen.length;
+}
+
+function countUniqueFast(ids: number[]): number {
+  const seen = new Set<number>();   // RIGHT: Set membership is O(1) average
+  for (const cid of ids) {
+    seen.add(cid);                  // add is idempotent; no need to check first
+  }
+  return seen.size;
+}
+
+const data = Array.from({ length: 80_000 }, (_, i) => i % 4000);
+
+let t = performance.now(); countUniqueSlow(data); console.log(`list: ${((performance.now() - t) / 1000).toFixed(3)}s`);
+t = performance.now(); countUniqueFast(data); console.log(`set:  ${((performance.now() - t) / 1000).toFixed(4)}s`);
 ```
 
 On a typical run the set version finishes in a small fraction of a second while the list version takes seconds — easily a few orders of magnitude apart at this size, and the gap widens with input length and with the number of distinct values. The two versions look almost identical in the diff. That's exactly why this bug survives code review: the cost is in the data structure choice, not in any line that looks expensive. The exact ratio depends on the machine and the number of distinct values, so measure the magnitude on your hardware with `timeit` before quoting a figure.
@@ -150,6 +231,29 @@ bisect.insort(prices, 30)             # O(log n) search + O(n) shift
 print(prices)                         # [10, 23, 23, 30, 41, 88]
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// JS has no bisect module; these are the standard binary-search implementations.
+function bisectLeft(a: number[], x: number): number {
+  let lo = 0, hi = a.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (a[mid] < x) lo = mid + 1; else hi = mid;
+  }
+  return lo;
+}
+function insort(a: number[], x: number): void {
+  a.splice(bisectLeft(a, x), 0, x);   // O(log n) search + O(n) shift
+}
+
+const prices = [10, 23, 23, 41, 88];   // kept sorted
+const i = bisectLeft(prices, 23);       // O(log n): leftmost index where 23 fits
+console.log(i);                         // 1
+insort(prices, 30);                     // O(log n) search + O(n) shift
+console.log(prices);                    // [10, 23, 23, 30, 41, 88]
+```
+
 > **Connect the dots:** The balanced-tree guarantee is the load-bearing idea behind database indexes (Part 5 — Databases). When you add an index to a column, you're asking the engine to maintain a B-tree so that `WHERE col = ?` is O(log n) instead of a full O(n) table scan. The "why balance matters" intuition here is the same intuition that explains why an index speeds up reads but slows down writes — every write now has to keep the tree balanced too.
 
 ### Heaps and priority queues: the smallest thing, fast
@@ -172,6 +276,59 @@ def top_k(stream, k):
     return sorted(h, reverse=True)
 
 print(top_k([5, 1, 9, 3, 7, 8, 2], 3))   # [9, 8, 7]
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// JS has no heapq; this is a minimal binary min-heap with push/peek/replace.
+class MinHeap {
+  private h: number[] = [];
+  get size(): number { return this.h.length; }
+  peek(): number { return this.h[0]; }
+  push(x: number): void {
+    const h = this.h;
+    h.push(x);
+    let i = h.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (h[p] <= h[i]) break;
+      [h[p], h[i]] = [h[i], h[p]];
+      i = p;
+    }
+  }
+  replace(x: number): void {   // pop min, push x, in one O(log k) step
+    const h = this.h;
+    h[0] = x;
+    let i = 0;
+    const n = h.length;
+    while (true) {
+      const l = 2 * i + 1, r = 2 * i + 2;
+      let smallest = i;
+      if (l < n && h[l] < h[smallest]) smallest = l;
+      if (r < n && h[r] < h[smallest]) smallest = r;
+      if (smallest === i) break;
+      [h[smallest], h[i]] = [h[i], h[smallest]];
+      i = smallest;
+    }
+  }
+  toArray(): number[] { return [...this.h]; }
+}
+
+// Top-3 largest from a stream, using a size-3 min-heap. O(n log k), O(k) memory.
+function topK(stream: number[], k: number): number[] {
+  const h = new MinHeap();
+  for (const x of stream) {
+    if (h.size < k) {
+      h.push(x);
+    } else if (x > h.peek()) {   // peek() is the smallest of the current top-k
+      h.replace(x);              // pop min, push x, in one O(log k) step
+    }
+  }
+  return h.toArray().sort((a, b) => b - a);
+}
+
+console.log(topK([5, 1, 9, 3, 7, 8, 2], 3));   // [9, 8, 7]
 ```
 
 The win: finding top-3 of ten million items doesn't require sorting all ten million (O(n log n) and O(n) memory). The heap holds only k items and does O(n log k) work. For a priority queue with explicit priorities, push `(priority, item)` tuples and let tuple comparison order them.
@@ -205,6 +362,41 @@ def bfs(graph, start):
     return order
 
 print(bfs(graph, "a"))   # ['a', 'b', 'c', 'd']
+```
+
+*The same idea in TypeScript:*
+
+```typescript
+// Adjacency list: the everyday choice. Map<string, string[]> stands in for defaultdict(list).
+const graph = new Map<string, string[]>();
+const addEdge = (u: string, v: string) => {
+  if (!graph.has(u)) graph.set(u, []);
+  graph.get(u)!.push(v);
+};
+for (const [u, v] of [["a", "b"], ["a", "c"], ["b", "d"], ["c", "d"]]) {
+  addEdge(u, v);
+  addEdge(v, u);   // undirected: add both directions
+}
+
+function bfs(graph: Map<string, string[]>, start: string): string[] {
+  const seen = new Set<string>([start]);   // a SET, not an array — membership is the inner loop
+  const order: string[] = [];
+  const q: string[] = [start];
+  let head = 0;                            // index cursor: O(1) dequeue, unlike Array.shift()
+  while (head < q.length) {
+    const node = q[head++];
+    order.push(node);
+    for (const nbr of graph.get(node) ?? []) {
+      if (!seen.has(nbr)) {                // O(1) because seen is a Set
+        seen.add(nbr);
+        q.push(nbr);
+      }
+    }
+  }
+  return order;
+}
+
+console.log(bfs(graph, "a"));   // ['a', 'b', 'c', 'd']
 ```
 
 Notice that this one small function uses three of the structures correctly: an adjacency list for the graph, a `set` for visited tracking (the list-vs-set bug would make BFS O(V²) instead of O(V+E)), and a `deque` for the frontier so dequeue is O(1). That composition — right structure for each sub-job — is what good systems code looks like.

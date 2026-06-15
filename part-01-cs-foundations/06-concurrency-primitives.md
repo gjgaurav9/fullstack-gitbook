@@ -64,6 +64,35 @@ func main() {
 }
 ```
 
+*In TypeScript:*
+
+```typescript
+import { Worker, isMainThread, workerData, parentPort } from "node:worker_threads";
+
+if (isMainThread) {
+  // A SharedArrayBuffer is the only memory two threads can both touch.
+  const sab = new SharedArrayBuffer(4);
+  const counter = new Int32Array(sab);
+
+  const workers = Array.from({ length: 2 }, () =>
+    new Promise<void>((resolve) => {
+      const w = new Worker(__filename, { workerData: sab });
+      w.on("exit", () => resolve());
+    }),
+  );
+
+  Promise.all(workers).then(() => {
+    console.log(counter[0]); // you might get 2000 — or a too-small number
+  });
+} else {
+  const counter = new Int32Array(workerData as SharedArrayBuffer);
+  for (let j = 0; j < 1000; j++) {
+    counter[0]++; // load, add, store — not atomic
+  }
+  parentPort!.postMessage("done");
+}
+```
+
 Run it and you might get 2000. Run it many times and you'll see a different, too-small number each run. The bug is real but intermittent, which is the worst kind. Go ships the tool that makes it deterministic to *detect*:
 
 ```text
@@ -104,6 +133,35 @@ func (c *Counter) Value() int {
 }
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { Mutex } from "async-mutex";
+
+class Counter {
+  private mu = new Mutex();
+  private total = 0;
+
+  async inc(): Promise<void> {
+    const release = await this.mu.acquire();
+    try {
+      this.total++;
+    } finally {
+      release();
+    }
+  }
+
+  async value(): Promise<number> {
+    const release = await this.mu.acquire();
+    try {
+      return this.total;
+    } finally {
+      release();
+    }
+  }
+}
+```
+
 `Lock()` blocks until the goroutine holds the lock; `Unlock()` releases it. The `Unlock` happens-before the next `Lock` returns, so every increment sees all prior increments. Note that `Value()` also locks — reading shared state concurrently with a write is itself a race, even though reading "feels" safe. The `defer` guarantees release even if the critical section panics.
 
 A few rules that prevent most mutex pain:
@@ -127,6 +185,27 @@ type Counter struct {
 
 func (c *Counter) Inc()         { c.total.Add(1) }
 func (c *Counter) Value() int64 { return c.total.Load() }
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+// `total` lives in shared memory; Atomics provides indivisible RMW ops.
+class Counter {
+  private total: BigInt64Array;
+
+  constructor(sab: SharedArrayBuffer) {
+    this.total = new BigInt64Array(sab);
+  }
+
+  inc(): void {
+    Atomics.add(this.total, 0, 1n);
+  }
+
+  value(): bigint {
+    return Atomics.load(this.total, 0);
+  }
+}
 ```
 
 `Add` and `Load` are indivisible and establish happens-before edges, so there's no lost-update window. This is lock-free, faster than a mutex for the single-word case, and impossible to misuse with a forgotten `Unlock`. The limit: atomics protect *one word*. The moment your invariant spans two fields — "decrement balance *and* append to ledger, together" — atomics can't express it and you need a mutex (or a channel) around the compound operation.
@@ -161,6 +240,36 @@ func main() {
 	wg.Wait()
 	close(inc)          // owner's range loop ends
 	fmt.Println(<-done) // always 2000
+}
+```
+
+*In TypeScript:*
+
+```typescript
+import { Worker, isMainThread, parentPort } from "node:worker_threads";
+
+if (isMainThread) {
+  let total = 0; // sole owner of `total`, lives on the main thread
+  let pending = 2;
+
+  const result = new Promise<number>((resolve) => {
+    for (let i = 0; i < 2; i++) {
+      const w = new Worker(__filename);
+      // Each message is one increment request, delivered to the owner.
+      w.on("message", (d: number) => {
+        total += d;
+      });
+      w.on("exit", () => {
+        if (--pending === 0) resolve(total);
+      });
+    }
+  });
+
+  result.then((t) => console.log(t)); // always 2000
+} else {
+  for (let j = 0; j < 1000; j++) {
+    parentPort!.postMessage(1);
+  }
 }
 ```
 
@@ -202,6 +311,29 @@ func (q *Queue) Get() int {
 }
 ```
 
+*The TypeScript equivalent:*
+
+```typescript
+class Queue {
+  private items: number[] = [];
+  private waiters: Array<() => void> = []; // resolvers for sleeping getters
+
+  put(x: number): void {
+    this.items.push(x);
+    const wake = this.waiters.shift(); // signal one waiter
+    if (wake) wake();
+  }
+
+  async get(): Promise<number> {
+    while (this.items.length === 0) {
+      // MUST be a loop: re-check the predicate after each wake.
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+    return this.items.shift()!;
+  }
+}
+```
+
 The non-negotiable rule: **always re-check the predicate in a `for` loop, never an `if`.** `Wait()` can return spuriously, and even a correct `Signal` may race another consumer that drains the item first. Re-checking on wake is what makes it correct. In idiomatic Go you'd usually reach for a buffered channel instead of `sync.Cond` — channels handle blocking and signaling for you — but condition variables are the right tool when waiters need to test a complex predicate, and you'll meet `pthread_cond_t` everywhere in C.
 
 A **semaphore** limits concurrency to N. Go has no built-in type, but a buffered channel *is* a counting semaphore — acquire by sending, release by receiving:
@@ -214,6 +346,19 @@ for _, job := range jobs {
 		defer func() { <-sem }() // release
 		process(j)
 	}(job)
+}
+```
+
+*The same idea in TypeScript:*
+
+```typescript
+import { Semaphore } from "async-mutex";
+
+const sem = new Semaphore(10); // at most 10 concurrent
+for (const job of jobs) {
+  // runExclusive acquires (resolving later if 10 are in flight) and
+  // releases automatically when the callback settles.
+  sem.runExclusive(() => process(job));
 }
 ```
 

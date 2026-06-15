@@ -116,6 +116,18 @@ setup_cost = {
 }
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+// The cost model, made explicit. Times are illustrative RTT counts,
+// not benchmarks -- the point is the relative shape.
+const setupCost: Record<string, string> = {
+  "http1.1_new": "DNS + TCP(1) + TLS1.2(2) = ~4 RTT before first byte",
+  "http2_new":   "DNS + TCP(1) + TLS1.3(1) = ~2 RTT, then multiplexed",
+  "http3_new":   "DNS + QUIC(1, TLS built in) = ~1 RTT, 0-RTT on resume",
+};
+```
+
 **HTTP/1.1** uses one request per connection at a time. Pipelining was specified but never worked in practice, so browsers open several parallel TCP connections per host, each paying its own handshake and slow-start tax. Worse, a slow response blocks everything behind it on that connection — **head-of-line (HOL) blocking** at the application layer.
 
 **HTTP/2** ([RFC 9113](https://www.rfc-editor.org/rfc/rfc9113)) fixes application-layer HOL blocking with **multiplexing**: many independent streams over one TCP connection, interleaved as binary frames. One connection, one handshake, one slow-start ramp, full concurrency. But it has a subtle remaining flaw: because all streams share one TCP byte stream, a single lost TCP segment stalls *every* stream until it's retransmitted — **TCP-level HOL blocking**. On a clean network you never notice; on a lossy mobile link it hurts.
@@ -149,6 +161,34 @@ var client = &http.Client{
 
 func fetchGood(url string) (*http.Response, error) {
 	return client.Get(url) // reuses a warm connection when available
+}
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+import { Agent } from "undici";
+
+// WRONG: a fresh dispatcher (and connection pool) per request.
+// Every call eats DNS + TCP + TLS setup. Under load this also
+// leaks file descriptors and exhausts ephemeral ports.
+function fetchBad(url: string): Promise<Response> {
+  const agent = new Agent(); // new pool, thrown away immediately
+  return fetch(url, { dispatcher: agent } as RequestInit);
+}
+
+// RIGHT: one shared dispatcher with a tuned, reused connection pool.
+// Keep-alive connections skip handshakes entirely on later requests.
+const agent = new Agent({
+  connections: 10, // like MaxIdleConnsPerHost
+  keepAliveTimeout: 90_000, // 90s, like IdleConnTimeout
+  headersTimeout: 10_000, // overall request budget, 10s
+  bodyTimeout: 10_000,
+});
+
+function fetchGood(url: string): Promise<Response> {
+  // reuses a warm connection when available
+  return fetch(url, { dispatcher: agent } as RequestInit);
 }
 ```
 

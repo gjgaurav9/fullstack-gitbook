@@ -73,6 +73,40 @@ perms = effective_permissions(
 print(sorted(perms))   # ['comment', 'read', 'write']
 ```
 
+The same idea in TypeScript:
+
+```typescript
+// Effective permissions = roles the user has, expanded to their grants,
+// minus anything explicitly revoked.
+function effectivePermissions(
+  userRoles: Set<string>,
+  roleGrants: Map<string, Set<string>>,
+  explicitRevocations: Set<string>,
+): Set<string> {
+  const granted = new Set<string>();
+  for (const role of userRoles) {
+    for (const p of roleGrants.get(role) ?? new Set<string>()) {
+      granted.add(p); // union
+    }
+  }
+  // difference
+  return new Set([...granted].filter((p) => !explicitRevocations.has(p)));
+}
+
+const roleGrants = new Map<string, Set<string>>([
+  ["editor", new Set(["read", "write", "comment"])],
+  ["viewer", new Set(["read"])],
+  ["auditor", new Set(["read", "export"])],
+]);
+
+const perms = effectivePermissions(
+  new Set(["editor", "auditor"]),
+  roleGrants,
+  new Set(["export"]),
+);
+console.log([...perms].sort()); // ['comment', 'read', 'write']
+```
+
 The four operations you need: union (`|`, "either"), intersection (`&`, "both"), difference (`-`, "in the first not the second"), and symmetric difference (`^`, "in exactly one"). Symmetric difference is the one people forget and the one that powers diffing:
 
 ```python
@@ -82,6 +116,17 @@ running = {"svc-b", "svc-c", "svc-d"}      # what's actually up
 to_start = desired - running               # {'svc-a'}
 to_stop  = running - desired               # {'svc-d'}
 churn    = desired ^ running               # {'svc-a', 'svc-d'}
+```
+
+In TypeScript:
+
+```typescript
+const desired = new Set(["svc-a", "svc-b", "svc-c"]); // what config says should run
+const running = new Set(["svc-b", "svc-c", "svc-d"]); // what's actually up
+
+const toStart = new Set([...desired].filter((s) => !running.has(s))); // {'svc-a'}
+const toStop = new Set([...running].filter((s) => !desired.has(s))); // {'svc-d'}
+const churn = new Set([...toStart, ...toStop]); // {'svc-a', 'svc-d'}
 ```
 
 That `to_start` / `to_stop` pattern is the core of every reconciliation loop in Kubernetes-style control planes. The controller computes the set difference between desired and observed state and acts only on the delta. Sets also give you `O(1)` membership versus `O(n)` for a list scan — using a `list` where you meant a `set` is one of the most common quiet performance bugs in glue code. The trap usually hides inside an innocent-looking `if x in collection` on a hot path: it reads identically whether `collection` is a list or a set, but the cost per call differs by orders of magnitude as the collection grows.
@@ -102,6 +147,28 @@ def can_access_buggy(authenticated, verified):
     if not authenticated and not verified:   # WRONG negation
         return False
     return True
+```
+
+The TypeScript equivalent:
+
+```typescript
+// WRONG: "block if not authenticated or not verified" got mangled.
+function canAccessWrong(authenticated: boolean, verified: boolean): boolean {
+  if (!(authenticated && verified)) {
+    // intended
+    return false;
+  }
+  return true;
+}
+
+// A teammate "simplifies" it during review and gets it subtly wrong:
+function canAccessBuggy(authenticated: boolean, verified: boolean): boolean {
+  if (!authenticated && !verified) {
+    // WRONG negation
+    return false;
+  }
+  return true;
+}
 ```
 
 `can_access_buggy` lets through a user who is authenticated but *not* verified, because `not authenticated and not verified` is only true when *both* are false. The correct distribution of the negation is De Morgan's law:
@@ -136,6 +203,16 @@ total = alphabet ** length
 print(f"{total:,}")   # 2,821,109,907,456  (~2.8 trillion)
 ```
 
+In TypeScript:
+
+```typescript
+// How many distinct 8-char codes from [A-Z0-9] (36 symbols)?
+const alphabet = 36;
+const length = 8;
+const total = alphabet ** length;
+console.log(total.toLocaleString("en-US")); // 2,821,109,907,456  (~2.8 trillion)
+```
+
 Plenty for human-facing coupon codes. But raw count is not the question you usually care about. The real question is *collision probability* — when you generate IDs randomly, when do two collide? That's the birthday problem, and the answer surprises everyone: collisions become likely at roughly the *square root* of the space size, not the size itself.
 
 ```python
@@ -150,6 +227,24 @@ space = 36 ** 8                      # ~2.8e12
 for n in (10_000, 100_000, 1_000_000):
     p = collision_probability(space, n)
     print(f"{n:>9,} IDs -> P(collision) = {p:.4%}")
+```
+
+The same idea in TypeScript:
+
+```typescript
+function collisionProbability(spaceSize: number, numDrawn: number): number {
+  // Approx P(at least one collision) drawing numDrawn IDs from spaceSize.
+  // 1 - exp(-n^2 / 2N), the standard birthday approximation
+  return 1 - Math.exp(-(numDrawn ** 2) / (2 * spaceSize));
+}
+
+const space = 36 ** 8; // ~2.8e12
+for (const n of [10_000, 100_000, 1_000_000]) {
+  const p = collisionProbability(space, n);
+  const label = n.toLocaleString("en-US").padStart(9);
+  console.log(`${label} IDs -> P(collision) = ${(p * 100).toFixed(4)}%`);
+}
+// (output matches the Python run below)
 ```
 
 ```text
@@ -212,6 +307,58 @@ print(topological_order(services))
 # ['config', 'db', 'auth', 'api', 'web']
 ```
 
+The same idea in TypeScript:
+
+```typescript
+function topologicalOrder(graph: Map<string, Set<string>>): string[] {
+  // graph: node -> set(dependencies it must start AFTER).
+  // Returns a valid order, or throws if there's a cycle.
+  // Build in-degree: how many deps each node is still waiting on.
+  const indegree = new Map<string, number>();
+  for (const node of graph.keys()) indegree.set(node, 0);
+  for (const [node, deps] of graph) {
+    for (const _ of deps) indegree.set(node, indegree.get(node)! + 1);
+  }
+
+  // Start with everything that depends on nothing.
+  const ready: string[] = [];
+  for (const [n, d] of indegree) if (d === 0) ready.push(n);
+  const order: string[] = [];
+
+  // Reverse map: who is waiting on me?
+  const dependents = new Map<string, string[]>();
+  for (const n of graph.keys()) dependents.set(n, []);
+  for (const [node, deps] of graph) {
+    for (const dep of deps) dependents.get(dep)!.push(node);
+  }
+
+  while (ready.length > 0) {
+    const n = ready.shift()!;
+    order.push(n);
+    for (const m of dependents.get(n)!) {
+      indegree.set(m, indegree.get(m)! - 1);
+      if (indegree.get(m) === 0) ready.push(m);
+    }
+  }
+
+  if (order.length !== graph.size) {
+    const cyclic = [...graph.keys()].filter((n) => indegree.get(n)! > 0);
+    throw new Error(`dependency cycle involving: ${cyclic.sort()}`);
+  }
+  return order;
+}
+
+const services = new Map<string, Set<string>>([
+  ["config", new Set()],
+  ["db", new Set(["config"])],
+  ["auth", new Set(["config", "db"])],
+  ["api", new Set(["auth", "db"])],
+  ["web", new Set(["api"])],
+]);
+console.log(topologicalOrder(services));
+// ['config', 'db', 'auth', 'api', 'web']
+```
+
 Introduce a cycle (`config` now depends on `web`) and the function raises `dependency cycle involving: ['api', 'auth', 'config', 'db', 'web']` instead of silently producing a broken order. This is the same machine under `make`, `terraform apply`'s resource graph, build systems, task schedulers, and database migration ordering. The two graph traversals you must own are BFS (shortest path in unweighted graphs, level-order, this topological sort) and DFS (cycle detection, reachability, connected components). Almost everything else is a variation. Both run in `O(V + E)` time — linear in the number of nodes plus edges — which is why running cycle detection in CI on a dependency graph of thousands of nodes costs milliseconds and is never the thing you trade away.
 
 > **Connect the dots:** This is the same graph from the Data Structures chapter (Part 1) and the same DAG idea behind Git's commit history (Part 3) — a commit's parents are its dependencies, and `git log` is a graph traversal. Once the DAG model clicks here, it transfers directly to build pipelines (Part 8) and event-sourcing causality.
@@ -230,6 +377,21 @@ def h(key: str) -> int:
 keys = [f"user:{i}" for i in range(100_000)]
 stayed = sum(1 for k in keys if h(k) % 7 == h(k) % 8)
 print(f"{stayed / len(keys):.1%} of keys keep their node")  # ~12.6%
+```
+
+The TypeScript equivalent:
+
+```typescript
+import { createHash } from "node:crypto";
+
+function h(key: string): bigint {
+  return BigInt("0x" + createHash("md5").update(key).digest("hex"));
+}
+
+// How many keys keep their node when N goes 7 -> 8?
+const keys = Array.from({ length: 100_000 }, (_, i) => `user:${i}`);
+const stayed = keys.filter((k) => h(k) % 7n === h(k) % 8n).length;
+console.log(`${((stayed / keys.length) * 100).toFixed(1)}% of keys keep their node`); // ~12.6%
 ```
 
 Only about an eighth of keys keep their node; the rest — roughly 87% — remap, and their cache entries are instantly cold. Consistent hashing fixes this by hashing both nodes *and* keys onto the same circular space (`mod 2^32`), then assigning each key to the first node clockwise. Adding or removing a node only disturbs the arc it sits on — on average `K/N` keys move instead of nearly all of them.
@@ -263,6 +425,73 @@ ring7 = ConsistentHashRing([f"node{i}" for i in range(7)])
 ring8 = ConsistentHashRing([f"node{i}" for i in range(8)])
 moved = sum(1 for k in keys if ring7.node_for(k) != ring8.node_for(k))
 print(f"{moved / len(keys):.1%} of keys move with consistent hashing")  # ~15%
+```
+
+The same idea in TypeScript:
+
+```typescript
+function insort(arr: bigint[], x: bigint): void {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (arr[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  arr.splice(lo, 0, x);
+}
+
+// bisect: index of the first point strictly greater than x
+function bisect(arr: bigint[], x: bigint): number {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (x < arr[mid]) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+class ConsistentHashRing {
+  private vnodes: number;
+  private ring = new Map<bigint, string>(); // point on circle -> node
+  private sortedPoints: bigint[] = [];
+
+  constructor(nodes: string[], vnodes = 100) {
+    this.vnodes = vnodes;
+    for (const node of nodes) this.add(node);
+  }
+
+  private point(label: string): bigint {
+    const digest = BigInt("0x" + createHash("md5").update(label).digest("hex"));
+    return digest % 2n ** 32n;
+  }
+
+  private add(node: string): void {
+    for (let i = 0; i < this.vnodes; i++) {
+      // virtual nodes spread load evenly
+      const p = this.point(`${node}#${i}`);
+      this.ring.set(p, node);
+      insort(this.sortedPoints, p);
+    }
+  }
+
+  nodeFor(key: string): string {
+    const p = this.point(key);
+    const idx = bisect(this.sortedPoints, p) % this.sortedPoints.length;
+    return this.ring.get(this.sortedPoints[idx])!;
+  }
+}
+
+const ring7 = new ConsistentHashRing(
+  Array.from({ length: 7 }, (_, i) => `node${i}`),
+);
+const ring8 = new ConsistentHashRing(
+  Array.from({ length: 8 }, (_, i) => `node${i}`),
+);
+const moved = keys.filter((k) => ring7.nodeFor(k) !== ring8.nodeFor(k)).length;
+console.log(`${((moved / keys.length) * 100).toFixed(1)}% of keys move with consistent hashing`); // ~15%
 ```
 
 The drop from roughly 87% of keys moving to roughly 15% is the whole reason consistent hashing exists, and it lives entirely in how `mod` interacts with the ring. The *virtual nodes* (`vnodes`) matter too: without them, a few nodes own huge arcs and load is lopsided — the same hot-node symptom from the incident, for a different reason. The same `mod` arithmetic underpins ring buffers (`index = (head + 1) % capacity`), and the same modular exponentiation underpins RSA and Diffie-Hellman. When you see `% N` in sharding code review, that's your cue to ask whether `N` is ever allowed to change.

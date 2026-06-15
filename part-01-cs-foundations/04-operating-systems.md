@@ -61,6 +61,18 @@ func main() {
 }
 ```
 
+*The same idea in TypeScript:*
+
+```typescript
+import { openSync, readSync, closeSync } from "node:fs";
+
+const fd = openSync("/etc/hostname", "r");
+const buf = Buffer.alloc(64);
+const n = readSync(fd, buf, 0, 64, null);
+process.stdout.write(buf.subarray(0, n));
+closeSync(fd);
+```
+
 ```bash
 $ strace -f -e trace=openat,read,write,close ./readhost
 openat(AT_FDCWD, "/etc/hostname", O_RDONLY|O_CLOEXEC) = 3
@@ -110,6 +122,41 @@ func main() {
 		}(i)
 	}
 	wg.Wait()
+}
+```
+
+*The TypeScript equivalent:*
+
+```typescript
+import {
+  Worker,
+  isMainThread,
+  workerData,
+} from "node:worker_threads";
+import { availableParallelism } from "node:os";
+import { fileURLToPath } from "node:url";
+
+if (isMainThread) {
+  console.log("GOMAXPROCS:", availableParallelism());
+  const self = fileURLToPath(import.meta.url);
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < 4; i++) {
+    workers.push(
+      new Promise<void>((resolve, reject) => {
+        const w = new Worker(self, { workerData: i });
+        w.on("exit", () => resolve());
+        w.on("error", reject);
+      }),
+    );
+  }
+  await Promise.all(workers);
+} else {
+  const id = workerData as number;
+  let sum = 0;
+  for (let j = 0; j < 1e8; j++) {
+    sum += j;
+  }
+  console.log("worker", id, "done");
 }
 ```
 
