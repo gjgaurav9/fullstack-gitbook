@@ -97,12 +97,12 @@
 ## Part 9 — Observability & Reliability
 
 * [Overview](part-09-observability/README.md)
-* Logs, metrics, traces
-* OpenTelemetry in practice
-* SLOs, SLIs, and error budgets
-* Incident management
-* On-call practice
-* Chaos engineering and load testing
+* [Logs, metrics, traces](part-09-observability/01-logs-metrics-traces.md)
+* [OpenTelemetry in practice](part-09-observability/02-opentelemetry.md)
+* [SLOs, SLIs, and error budgets](part-09-observability/03-slos.md)
+* [Incident management](part-09-observability/04-incident-management.md)
+* [On-call practice](part-09-observability/05-oncall.md)
+* [Chaos engineering and load testing](part-09-observability/06-chaos-load-testing.md)
 
 ## Part 10 — Security
 

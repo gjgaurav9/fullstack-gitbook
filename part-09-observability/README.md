@@ -8,9 +8,9 @@ You can't fix what you can't see. The gap between "the system is broken" and "I 
 
 ## Chapters in this Part
 
-1. **Logs, metrics, traces** — The three pillars and what each is good for, with the failure modes of relying on only one.
-2. **OpenTelemetry in practice** — Instrumentation, context propagation, collectors, exporters, and the patterns that survive a vendor swap.
-3. **SLOs, SLIs, and error budgets** — Designing measurable reliability targets that drive engineering decisions.
-4. **Incident management** — Detection, response, command structure, comms, and postmortems that change behavior.
-5. **On-call practice** — Pages worth waking up for, runbooks that actually help, and rotation health.
-6. **Chaos engineering and load testing** — Breaking your system on purpose before it breaks for users.
+1. **[Logs, metrics, traces](01-logs-metrics-traces.md)** — The three pillars and what each is good for, with the failure modes of relying on only one.
+2. **[OpenTelemetry in practice](02-opentelemetry.md)** — Instrumentation, context propagation, collectors, exporters, and the patterns that survive a vendor swap.
+3. **[SLOs, SLIs, and error budgets](03-slos.md)** — Designing measurable reliability targets that drive engineering decisions.
+4. **[Incident management](04-incident-management.md)** — Detection, response, command structure, comms, and postmortems that change behavior.
+5. **[On-call practice](05-oncall.md)** — Pages worth waking up for, runbooks that actually help, and rotation health.
+6. **[Chaos engineering and load testing](06-chaos-load-testing.md)** — Breaking your system on purpose before it breaks for users.
